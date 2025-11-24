@@ -8,6 +8,9 @@ const http = require('http');
 // 라즈베리파이 통신을 위한 모듈들을 불러오기
 const { WebSocketServer } = require('ws');
 
+// 라우트 파일 임포트
+const cameraRoutes = require('./cameraRoutes');
+
 // 서버 시작 시 API 키 확인 (테스트)
 console.log('=== API 키 상태 확인 ===');
 console.log('Gemini API 키:', process.env.GEMINI_API_KEY ? '있음' : '없음');
@@ -31,6 +34,14 @@ const corsOptions = {
 
 const app = express();
 const PORT = 4000;
+
+// 미들웨어 설정
+app.use(cors({ origin: '*' })); // 모든 출처 허용 (개발용)
+app.use(bodyParser.json({ limit: '50mb' })); // 🔥 이미지 전송을 위해 용량 제한 늘림
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+
+// 라우트 등록
+app.use('/camera', cameraRoutes);
 
 // ✅ 필수 API 키
 const GEMINI_API_KEY       = process.env.GEMINI_API_KEY;
