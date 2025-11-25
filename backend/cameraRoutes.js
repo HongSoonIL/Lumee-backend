@@ -78,7 +78,7 @@ router.post('/capture', async (req, res) => {
 // ========== Gemini Vision 분석 함수 ==========
 async function analyzeClothing(base64Image) {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     const prompt = `
 이 사진 속 인물의 옷차림을 분석해줘.
