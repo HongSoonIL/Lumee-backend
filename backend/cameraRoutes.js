@@ -8,7 +8,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // 라즈베리파이 주소 (환경변수에서 가져오기)
-const RASPI_CAMERA_URL = process.env.RASPI_CAMERA_URL || 'http://192.168.50.135:5000';
+const RASPI_CAMERA_URL = process.env.RASPI_CAMERA_URL || 'http://192.168.50.48:5000';
 
 console.log(`📹 라즈베리파이 카메라 주소: ${RASPI_CAMERA_URL}`);
 
