@@ -60,10 +60,6 @@ const wss = new WebSocketServer({ server });
 
 console.log('--- Lumee 백엔드 서버 시작 ---');
 
-wss.on('connection', ws => {
-    console.log('[웹소켓] 프론트엔드와 연결되었습니다.');
-});
-
 // 라즈베리파이로부터 Wi-Fi를 통해 노크 신호를 받을 엔드포인트
 app.post('/knock', (req, res) => {
     console.log('[HTTP] ✊ 라즈베리파이로부터 "KNOCK" 신호 수신!');
