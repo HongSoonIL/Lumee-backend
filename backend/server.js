@@ -3,6 +3,15 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const http = require('http');
+// [추가됨] 시리얼 통신 모듈
+const { SerialPort } = require('serialport');
+
+// 라즈베리파이 통신을 위한 모듈
+const { WebSocketServer } = require('ws');
+
+// 라우트 파일 임포트
+const cameraRoutes = require('./cameraRoutes');
 
 // 서버 시작 시 API 키 확인 (테스트)
 console.log('=== API 키 상태 확인 ===');
@@ -17,8 +26,10 @@ const { getWeatherByCoords } = require('./weatherUtils'); // 홈 화면 날씨 �
 const conversationStore = require('./conversationStore');
 const { callGeminiForToolSelection, callGeminiForFinalResponse } = require('./geminiUtils');
 const { availableTools, executeTool } = require('./tools');
+// 🔥 LED 컨트롤러 함수
+const { setupLEDRoutes, determineLEDStatus, adjustBrightnessForUser } = require('./ledController');
 
-//프론트엔드와 연결을 위한 상수
+// 프론트엔드와 연결을 위한 상수
 const corsOptions = {
   origin: '*',
   methods: 'GET,POST,PUT,DELETE,OPTIONS',
@@ -28,277 +39,273 @@ const corsOptions = {
 const app = express();
 const PORT = 4000;
 
+// 미들웨어 설정
+app.use(cors({ origin: '*' }));
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+
+// 라우트 등록
+app.use('/camera', cameraRoutes);
+
+// 🎬 정적 파일 서빙 (날씨 영상용)
+app.use('/static', express.static('public'));
+
 // ✅ 필수 API 키
-// 키 외부 노출을 막기 위해 배포 후 .env 파일로 분리할 수 있음.
-const GEMINI_API_KEY       = process.env.GEMINI_API_KEY;
-const OPENWEATHER_API_KEY  = process.env.OPENWEATHER_API_KEY;
-const GOOGLE_MAPS_API_KEY  = process.env.GOOGLE_MAPS_API_KEY;
-const AMBEE_POLLEN_API_KEY = process.env.AMBEE_POLLEN_API_KEY;
+const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
 
-app.use(cors(corsOptions));
-app.use(bodyParser.json());
+// Express 앱을 기반으로 HTTP 서버 생성 (웹소켓용)
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
 
+console.log('--- Lumee 백엔드 서버 시작 ---');
 
-//  채팅 제목 자동 생성 API
-app.post('/generate-title', async (req, res) => {
-  const { userInput } = req.body;
-  
-  try {
-    const prompt = `
-Generate a concise English title for this weather-related conversation based on the user's question.
+// LED 라우트 설정
+setupLEDRoutes(app);
 
-Rules:
-- Maximum 4 words
-- Use title case (First Letter Capitalized)
-- No emojis or special characters
-- Focus on the main topic (weather, location, condition)
-- Be specific and descriptive
+// 🔥🔥🔥 [소리 전용] 아두이노 COM3 연결 설정 🔥🔥🔥
+let soundSerial = null;
+try {
+  soundSerial = new SerialPort({
+    path: 'COM3', // 소리 전용 아두이노 포트
+    baudRate: 9600
+  });
 
-User question: "${userInput}"
+  soundSerial.on('open', () => {
+    console.log('🔊 Sound Arduino connected on COM14');
+  });
 
-Examples:
-"What's the weather like today?" → "Today’s Weather"
-"오늘 날씨 어때?" → "Today’s Weather"
-"오늘 서울 날씨 어때?" → "Seoul Weather Today"
-"내일 부산 비 올까?" → "Busan Rain Tomorrow"
-"미세먼지 농도 궁금해" → "Air Quality Check"
-"꽃가루 알레르기 조심해야 할까?" → "Pollen Allergy Alert"
-"이번주 날씨 어떨까?" → "Weekly Weather Forecast"
-"습도가 높아?" → "Humidity Levels"
-
-Title:`;
-
-    const result = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: prompt }]
-          }
-        ]
-      }
-    );
-
-    let title = result.data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'New Weather Chat';
-    
-    // "Title:" 접두사 제거 및 정리
-    title = title.replace(/^Title:\s*/i, '').trim();
-    title = title.replace(/[""]/g, ''); // 따옴표 제거
-    
-    // 4단어 초과시 자르기
-    const words = title.split(' ');
-    if (words.length > 4) {
-      title = words.slice(0, 4).join(' ');
-    }
-    
-    console.log('🏷️ 생성된 제목:', title);
-    res.json({ title });
-    
-  } catch (err) {
-    console.error('❌ 제목 생성 실패:', err.message);
-    
-    // 폴백: 키워드 기반 영어 제목 생성
-    const fallbackTitle = generateEnglishFallbackTitle(userInput);
-    res.json({ title: fallbackTitle });
-  }
-});
-
-// 폴백 영어 제목 생성 함수 (한국어 + 영어 지원)
-function generateEnglishFallbackTitle(input) {
-  const patterns = [
-    { keywords: ['날씨', 'weather', '기온', '온도', 'temperature'], title: 'Weather Inquiry' },
-    { keywords: ['미세먼지', 'pm2.5', 'pm10', 'air quality', 'pollution'], title: 'Air Quality Check' },
-    { keywords: ['꽃가루', '알레르기', 'pollen', 'allergy'], title: 'Pollen Alert' },
-    { keywords: ['비', '폭우', 'rain', 'shower', 'precipitation'], title: 'Rain Forecast' },
-    { keywords: ['눈', '폭설', 'snow', 'snowfall'], title: 'Snow Forecast' },
-    { keywords: ['태풍', '바람', 'wind', 'typhoon', 'storm'], title: 'Wind Weather' },
-    { keywords: ['습도', 'humidity', 'moisture'], title: 'Humidity Check' },
-    { keywords: ['내일', 'tomorrow'], title: 'Tomorrow Weather' },
-    { keywords: ['오늘', 'today'], title: 'Today Weather' },
-    { keywords: ['이번주', 'week', 'weekly'], title: 'Weekly Forecast' }
-  ];
-
-  for (const pattern of patterns) {
-    if (pattern.keywords.some(keyword => input.includes(keyword))) {
-      return pattern.title;
-    }
-  }
-
-  // 지역명 추출 시도
-  const cityMap = {
-    '서울': 'Seoul Weather',
-    '부산': 'Busan Weather', 
-    '대구': 'Daegu Weather',
-    '인천': 'Incheon Weather',
-    '광주': 'Gwangju Weather',
-    '대전': 'Daejeon Weather',
-    '울산': 'Ulsan Weather'
-  };
-  
-  for (const [korean, english] of Object.entries(cityMap)) {
-    if (input.includes(korean)) {
-      return english;
-    }
-  }
-
-  return 'Weather Chat';
+  soundSerial.on('error', (err) => {
+    console.error('⚠️ Sound Arduino Error:', err.message);
+  });
+} catch (e) {
+  console.log('⚠️ COM3 port not found. Sound disabled.');
 }
 
-// ✨ 신규 LLM 중심 채팅 엔드포인트 ✨
-app.post('/chat', async (req, res) => {
-    const { userInput, coords, uid } = req.body;
-    console.log(`💬 사용자 질문 (UID: ${uid}):`, userInput);
-    conversationStore.addUserMessage(userInput);
+// ---------------------------------------------------------
 
-    try {
-      // 1. 도구 선택
-      const toolSelectionResponse = await callGeminiForToolSelection(userInput, availableTools);
-      let functionCalls = toolSelectionResponse.candidates?.[0]?.content?.parts
-        .filter(p => p.functionCall)
-        .map(p => p.functionCall);
-
-      functionCalls = functionCalls.map(call => ({
-        ...call,
-        args: {
-          ...call.args,
-          user_input: userInput
-        }
-      }));
-
-      if (!functionCalls || functionCalls.length === 0) {
-        throw new Error('도구 선택이 이루어지지 않았습니다.');
-      }
-
-      // 2. 도구 실행
-      const executionPromises = functionCalls.map(call => executeTool(call, coords));
-      const results = await Promise.allSettled(executionPromises);
-      const toolOutputs = results.filter(r => r.status === 'fulfilled').map(r => r.value);
-      results.filter(r => r.status === 'rejected').forEach(r => console.error('❌ 도구 실행 실패:', r.reason));
-
-      // 3. 사용자 프로필 가져오기
-      const userProfile = await getUserProfile(uid);
-      if (userProfile) console.log(`👤 사용자 프로필:`, userProfile);
-
-      // 4. 최종 Gemini 응답 생성
-      const finalResponse = await callGeminiForFinalResponse(
-        userInput,
-        toolSelectionResponse,
-        toolOutputs,
-        userProfile,
-        functionCalls // 반드시 넘겨야 오류 없음
-      );
-
-      const reply = finalResponse.candidates?.[0]?.content?.parts?.[0]?.text || '죄송해요, 답변 생성에 실패했어요.';
-      console.log('🤖 최종 생성 답변:', reply);
-      // LLM의 답변 텍스트가 아닌, '실행된 도구'를 기준으로 데이터를 첨부합니다.
-      const responsePayload = { reply };
-
-      // ✅ 5. 사용자 질문에 따른 조건 분기
-      const fullWeather = toolOutputs.find(o => o.tool_function_name === 'get_full_weather_with_context');
-      const lowerInput = userInput.toLowerCase();
-
-      // 그래프 조건 (기온/온도/그래프 등)
-      if (lowerInput.includes('기온') || lowerInput.includes('온도') || lowerInput.includes('그래프')
-        || lowerInput.includes('temperature') || lowerInput.includes('temp') || lowerInput.includes('graph') 
-        || lowerInput.includes('뭐 입을까') || lowerInput.includes('뭐 입지') || lowerInput.includes('옷')
-        || lowerInput.includes('what should i wear') || lowerInput.includes('what to wear') || lowerInput.includes('clothing') || lowerInput.includes('outfit')
-        || lowerInput.includes('air') || lowerInput.includes('quality') || lowerInput.includes('dust') || lowerInput.includes('mask') || lowerInput.includes('pollution')) {
-        if (fullWeather?.output?.hourlyTemps?.length > 0) {
-          responsePayload.graph = fullWeather.output.hourlyTemps;
-          responsePayload.graphDate = fullWeather.output.date; // 날짜 정보 추가
-        }
-      }
-
-      // 미세먼지 조건
-      if (lowerInput.includes('미세먼지') || lowerInput.includes('먼지') || lowerInput.includes('공기') || lowerInput.includes('마스크') 
-        || lowerInput.includes('air') || lowerInput.includes('mask') || lowerInput.includes('dust') || lowerInput.includes('quality') || lowerInput.includes('pollution')) {
-        if (fullWeather?.output?.air?.pm25 !== undefined) {
-          const pm25 = fullWeather.output.air.pm25;
-          const getAirLevel = v => v <= 15 ? 'Good' : v <= 35 ? 'Moderate' : v <= 75 ? 'Poor' : 'Very Poor';
-          responsePayload.dust = {
-            value: pm25,
-            level: getAirLevel(pm25),
-            date: fullWeather.output.date // 추가
-          };
-        }
-      }
-
-        res.json(responsePayload);
-      } catch (err) {
-        const errorMessage =
-          err.response?.data?.error?.message || // Gemini 오류
-          err.response?.data ||                 // 기타 오류
-          err.message ||                        // 일반 오류
-          '요청 처리 중 오류가 발생했습니다.';
-
-        console.error('❌ /chat 처리 오류:', errorMessage);
-        res.status(500).json({ error: errorMessage });
-      }
+// 라즈베리파이 노크 신호 처리
+app.post('/knock', (req, res) => {
+  console.log('[HTTP] ✊ 라즈베리파이로부터 "KNOCK" 신호 수신!');
+  wss.clients.forEach(client => {
+    if (client.readyState === client.OPEN) {
+      client.send('KNOCK');
+    }
+  });
+  res.status(200).send('OK');
 });
-// 실시간 위치
-// 1. 위도/경도로 지역명 반환
+
+// 채팅 제목 자동 생성 API
+app.post('/generate-title', async (req, res) => {
+  try {
+    res.json({ title: 'New Weather Chat' });
+  } catch (err) {
+    res.json({ title: 'Weather Chat' });
+  }
+});
+
+// 🔥 [필수 함수] 날씨 ID를 문자열 조건으로 변환
+function mapWeatherIdToCondition(id) {
+  if (id >= 200 && id < 300) return "Thunderstorm";
+  if (id >= 300 && id < 500) return "Drizzle";
+  if (id >= 500 && id < 600) return "Rain";
+  if (id >= 600 && id < 700) return "Snow";
+  if (id >= 700 && id < 800) return "Mist";
+  if (id === 800) return "Clear";
+  if (id > 800) return "Clouds";
+  return "Clear";
+}
+
+// 🎬 [날씨 영상] 날씨 조건에 따른 영상 URL 반환
+function getWeatherVideoUrl(weatherCondition) {
+  const baseUrl = 'http://localhost:4000'; // 백엔드 서버 주소
+
+  const videoMap = {
+    'Rain': `${baseUrl}/static/videos/rain.html`,
+    'Snow': `${baseUrl}/static/videos/snow.html`,
+    'Mist': `${baseUrl}/static/videos/mist.html`,        // HTML wrapper 사용
+    'Clear': `${baseUrl}/static/videos/clear.html`,
+    'Clouds': `${baseUrl}/static/videos/clouds.html`,    // HTML wrapper 사용
+    // Thunderstorm과 Drizzle은 제외됨 - Clear로 대체
+    'Thunderstorm': `${baseUrl}/static/videos/clear.html`,
+    'Drizzle': `${baseUrl}/static/videos/rain.html`
+  };
+
+  return videoMap[weatherCondition] || `${baseUrl}/static/videos/clear.html`;
+}
+
+// ✨ LLM 중심 채팅 엔드포인트 ✨
+app.post('/chat', async (req, res) => {
+  const { userInput, coords, uid } = req.body;
+  console.log(`💬 사용자 질문 (UID: ${uid}):`, userInput);
+  conversationStore.addUserMessage(userInput);
+
+  try {
+    // 1. 사용자 프로필 로드
+    const userProfile = await getUserProfile(uid);
+
+    // 2. 도구 선택
+    const toolSelectionResponse = await callGeminiForToolSelection(userInput, availableTools);
+    let functionCalls = toolSelectionResponse.candidates?.[0]?.content?.parts
+      .filter(p => p.functionCall)
+      .map(p => p.functionCall);
+
+    if (!functionCalls) functionCalls = [];
+
+    functionCalls = functionCalls.map(call => ({
+      ...call,
+      args: { ...call.args, user_input: userInput }
+    }));
+
+    // 3. 도구 실행
+    const executionPromises = functionCalls.map(call => executeTool(call, coords, userProfile));
+    const results = await Promise.allSettled(executionPromises);
+    const toolOutputs = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+
+    // 4. 최종 Gemini 응답
+    const finalResponse = await callGeminiForFinalResponse(
+      userInput,
+      toolSelectionResponse,
+      toolOutputs,
+      userProfile,
+      functionCalls
+    );
+
+    const reply = finalResponse.candidates?.[0]?.content?.parts?.[0]?.text || '죄송해요, 답변 생성에 실패했어요.';
+    const responsePayload = { reply };
+
+    // 5. LED 및 소리 제어 로직
+    const fullWeather = toolOutputs.find(o => o.tool_function_name === 'get_full_weather_with_context');
+
+    if (fullWeather && fullWeather.output) {
+      const w = fullWeather.output.weather || {};
+      const a = fullWeather.output.air || {};
+      const p = fullWeather.output.pollen || {};
+
+      const mappedWeatherData = {
+        temperature: w.temp,
+        feelsLike: w.feelsLike,
+        pm10: a.pm10 || 0,
+        pm25: a.pm25 || 0,
+        ozone: 0,
+        uvIndex: w.uvi || 0,
+        pollen: p.count || 0,
+        precipitation: w.rain_1h || 0,
+        weather: mapWeatherIdToCondition(w.weatherId), // 함수 사용
+        clouds: w.clouds || 0,
+        humidity: w.humidity || 0
+      };
+
+      // LED 상태 결정
+      let ledStatus = determineLEDStatus(mappedWeatherData);
+
+      if (userProfile) {
+        ledStatus = adjustBrightnessForUser(ledStatus, userProfile);
+      }
+
+      // 🔥 [소리 출력] COM3 아두이노로 명령 전송
+      if (soundSerial && soundSerial.isOpen && ledStatus.soundId) {
+        soundSerial.write(ledStatus.soundId.toString());
+        console.log(`🔊 Sent sound command to COM3: ${ledStatus.soundId}`);
+      }
+
+      responsePayload.ledStatus = {
+        r: ledStatus.color.r,
+        g: ledStatus.color.g,
+        b: ledStatus.color.b,
+        effect: ledStatus.effect,
+        duration: ledStatus.duration,
+        priority: ledStatus.priority,
+        message: ledStatus.message,
+        s: ledStatus.soundId
+      };
+
+      // 🎬 [날씨 영상] 날씨 조건에 따른 영상 URL 추가
+      const weatherCondition = mappedWeatherData.weather;
+      const videoUrl = getWeatherVideoUrl(weatherCondition);
+      responsePayload.videoUrl = videoUrl;
+      console.log(`🎬 Weather video URL: ${videoUrl} (condition: ${weatherCondition})`);
+    }
+
+    // 그래프 및 미세먼지 정보 추가
+    const lowerInput = userInput.toLowerCase();
+
+    // (1) 그래프 데이터
+    if (['기온', '온도', '그래프', 'temp', 'what to wear', 'outfit'].some(k => lowerInput.includes(k))) {
+      if (fullWeather?.output?.hourlyTemps?.length > 0) {
+        responsePayload.graph = fullWeather.output.hourlyTemps;
+        responsePayload.graphDate = fullWeather.output.date;
+      }
+    }
+
+    // (2) 미세먼지 데이터
+    if (['미세먼지', '먼지', '마스크', 'dust', 'air quality'].some(k => lowerInput.includes(k))) {
+      if (fullWeather?.output?.air?.pm25 !== undefined) {
+        const pm25 = fullWeather.output.air.pm25;
+        const getAirLevel = v => v <= 15 ? 'Good' : v <= 35 ? 'Moderate' : v <= 75 ? 'Poor' : 'Very Poor';
+        responsePayload.dust = {
+          value: pm25,
+          level: getAirLevel(pm25),
+          date: fullWeather.output.date
+        };
+      }
+    }
+
+    res.json(responsePayload);
+
+  } catch (err) {
+    console.error('❌ /chat 처리 오류:', err.message);
+    res.status(500).json({ error: '요청 처리 중 오류가 발생했습니다.' });
+  }
+});
+
+// 주소 변환 API
 app.post('/reverse-geocode', async (req, res) => {
   const { latitude, longitude } = req.body;
   try {
     const region = await reverseGeocode(latitude, longitude);
     res.json({ region });
   } catch (err) {
-    console.error('📍 reverse-geocode 실패:', err.message);
     res.status(500).json({ error: '주소 변환 실패' });
   }
 });
 
-
-// 사용자의 위도/경도로 날씨 정보만 반환하는 API
-// 2. 위도/경도로 날씨 정보
+// 날씨 API
 app.post('/weather', async (req, res) => {
   const { latitude, longitude } = req.body;
   try {
     const weather = await getWeatherByCoords(latitude, longitude);
     res.json(weather);
   } catch (err) {
-    console.error('🌧️ 날씨 정보 가져오기 실패:', err.message);
-    res.status(500).json({ error: '날씨 정보를 불러오는 데 실패했습니다.' });
+    res.status(500).json({ error: '날씨 정보 실패' });
   }
 });
 
-// 3. 특정 시간 기온 변화 그래프 출력용
+// 그래프용 날씨 API
 app.post('/weather-graph', async (req, res) => {
   const { latitude, longitude } = req.body;
   try {
     const url = `https://api.openweathermap.org/data/3.0/onecall?lat=${latitude}&lon=${longitude}&exclude=minutely,daily,alerts&appid=${OPENWEATHER_API_KEY}&units=metric&lang=kr`;
     const result = await axios.get(url);
-    const data = result.data; // 한 번에 hourly + timezone_offset 사용
+    const data = result.data;
 
     const hourly = data.hourly;
-    const timezoneOffsetSec = data.timezone_offset || 0;
-    const offsetMs = timezoneOffsetSec * 1000;
-
-    // 1. 현재 UTC 시각
-    const utcNow = new Date();  // 무조건 UTC
-
-    // 2. 해당 지역 현지 기준 시각을 계산
-    const localNow = new Date(utcNow.getTime() + offsetMs);
-    localNow.setMinutes(0, 0, 0); // 분, 초 제거 → 정각으로
+    const offsetMs = (data.timezone_offset || 0) * 1000;
+    const localNow = new Date(new Date().getTime() + offsetMs);
+    localNow.setMinutes(0, 0, 0);
 
     const hourlyTemps = [];
-
     for (let i = 0; i < 6; i++) {
-      // 3. 3시간 간격 target UTC 시각 생성
       const targetLocalTime = new Date(localNow.getTime() + i * 3 * 60 * 60 * 1000);
       const targetUTC = new Date(targetLocalTime.getTime() - offsetMs);
-      // 4. UTC 기준에서 가장 가까운 hourly 데이터 찾기
+
+      // 가장 가까운 시간 찾기
       const closest = hourly.reduce((prev, curr) => {
         const currTime = curr.dt * 1000;
         return Math.abs(currTime - targetUTC.getTime()) < Math.abs(prev.dt * 1000 - targetUTC.getTime()) ? curr : prev;
       });
 
-      // 5. label은 현지 시간 기준
-      const localTime = new Date(targetUTC.getTime() + offsetMs);
       const hour = new Date(targetUTC.getTime() + offsetMs).getUTCHours();
       const label = `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 ? 'am' : 'pm'}`;
-      console.log(`✅ label=${label} | local=${localTime.toISOString()} | UTC=${targetUTC.toISOString()} | temp=${Math.round(closest.temp)}`);
 
       hourlyTemps.push({
         hour: label,
@@ -306,17 +313,14 @@ app.post('/weather-graph', async (req, res) => {
       });
     }
 
-        res.json({ hourlyTemps });
-        console.log('📡 최종 hourlyTemps:', hourlyTemps);
+    res.json({ hourlyTemps });
 
-      } catch (err) {
-        console.error('📊 시간별 기온 그래프용 API 실패:', err.message);
-        res.status(500).json({ error: '그래프용 날씨 데이터를 불러오는 데 실패했습니다.' });
-      }
-    });
-
-
-app.listen(PORT, () => {
-  console.log(`✅ Gemini+Weather 서버 실행 중: http://localhost:${PORT}`);
+  } catch (err) {
+    res.status(500).json({ error: '그래프 데이터 실패' });
+  }
 });
 
+server.listen(PORT, () => {
+  console.log(`[HTTP] API 서버가 ${PORT} 포트에서 실행 중입니다.`);
+  console.log(`[웹소켓] 통신 서버가 ${PORT} 포트에서 함께 실행 중입니다.`);
+});
