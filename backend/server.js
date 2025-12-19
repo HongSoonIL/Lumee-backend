@@ -62,7 +62,7 @@ console.log('--- Lumee 백엔드 서버 시작 ---');
 // LED 라우트 설정
 setupLEDRoutes(app);
 
-// 🔥🔥🔥 [소리 전용] 아두이노 COM3 연결 설정 🔥🔥🔥
+// 🔥🔥🔥 [소리 전용] 아두이노 COM3 연결 설정 🔥🔥🔥 **기기마다 COM번호가 다를 수 있음**
 let soundSerial = null;
 try {
   soundSerial = new SerialPort({
