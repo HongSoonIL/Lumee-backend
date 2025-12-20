@@ -91,7 +91,7 @@
   ┗ 📂 Claud_LED
     ┣ 📜 Claud_LED.ino
   ┗ 📂 Claud_LED2
-    ┣ 📜 Claud_LED.ino
+    ┣ 📜 Claud_LED2.ino
   ┣ 📜 raspi_camera.py
 ```
 
