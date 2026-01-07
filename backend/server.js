@@ -43,9 +43,6 @@ app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 // 라우트 등록
 app.use('/camera', cameraRoutes);
 
-// 🎬 정적 파일 서빙 (날씨 영상용)
-app.use('/static', express.static('public'));
-
 // ✅ 필수 API 키
 const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
 
@@ -77,35 +74,7 @@ app.post('/generate-title', async (req, res) => {
   }
 });
 
-// 🔥 [필수 함수] 날씨 ID를 문자열 조건으로 변환
-function mapWeatherIdToCondition(id) {
-  if (id >= 200 && id < 300) return "Thunderstorm";
-  if (id >= 300 && id < 500) return "Drizzle";
-  if (id >= 500 && id < 600) return "Rain";
-  if (id >= 600 && id < 700) return "Snow";
-  if (id >= 700 && id < 800) return "Mist";
-  if (id === 800) return "Clear";
-  if (id > 800) return "Clouds";
-  return "Clear";
-}
 
-// 🎬 [날씨 영상] 날씨 조건에 따른 영상 URL 반환
-function getWeatherVideoUrl(weatherCondition) {
-  const baseUrl = 'http://localhost:4000'; // 백엔드 서버 주소
-
-  const videoMap = {
-    'Rain': `${baseUrl}/static/videos/rain.html`,
-    'Snow': `${baseUrl}/static/videos/snow.html`,
-    'Mist': `${baseUrl}/static/videos/mist.html`,        // HTML wrapper 사용
-    'Clear': `${baseUrl}/static/videos/clear.html`,
-    'Clouds': `${baseUrl}/static/videos/clouds.html`,    // HTML wrapper 사용
-    // Thunderstorm과 Drizzle은 제외됨 - Clear로 대체
-    'Thunderstorm': `${baseUrl}/static/videos/clear.html`,
-    'Drizzle': `${baseUrl}/static/videos/rain.html`
-  };
-
-  return videoMap[weatherCondition] || `${baseUrl}/static/videos/clear.html`;
-}
 
 // ✨ LLM 중심 채팅 엔드포인트 ✨
 app.post('/chat', async (req, res) => {
@@ -147,18 +116,8 @@ app.post('/chat', async (req, res) => {
     const reply = finalResponse.candidates?.[0]?.content?.parts?.[0]?.text || '죄송해요, 답변 생성에 실패했어요.';
     const responsePayload = { reply };
 
-    // 날씨 데이터에서 영상 URL 추가
+    // 날씨 데이터 찾기
     const fullWeather = toolOutputs.find(o => o.tool_function_name === 'get_full_weather_with_context');
-
-    if (fullWeather && fullWeather.output) {
-      const w = fullWeather.output.weather || {};
-
-      // 🎬 [날씨 영상] 날씨 조건에 따른 영상 URL 추가
-      const weatherCondition = mapWeatherIdToCondition(w.weatherId);
-      const videoUrl = getWeatherVideoUrl(weatherCondition);
-      responsePayload.videoUrl = videoUrl;
-      console.log(`🎬 Weather video URL: ${videoUrl} (condition: ${weatherCondition})`);
-    }
 
     // 그래프 및 미세먼지 정보 추가
     const lowerInput = userInput.toLowerCase();
