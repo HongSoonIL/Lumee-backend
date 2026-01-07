@@ -4,8 +4,6 @@ const axios = require('axios');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const http = require('http');
-// [추가됨] 시리얼 통신 모듈
-const { SerialPort } = require('serialport');
 
 // 라즈베리파이 통신을 위한 모듈
 const { WebSocketServer } = require('ws');
@@ -26,8 +24,6 @@ const { getWeatherByCoords } = require('./weatherUtils'); // 홈 화면 날씨 �
 const conversationStore = require('./conversationStore');
 const { callGeminiForToolSelection, callGeminiForFinalResponse } = require('./geminiUtils');
 const { availableTools, executeTool } = require('./tools');
-// 🔥 LED 컨트롤러 함수
-const { setupLEDRoutes, determineLEDStatus, adjustBrightnessForUser } = require('./ledController');
 
 // 프론트엔드와 연결을 위한 상수
 const corsOptions = {
@@ -47,9 +43,6 @@ app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 // 라우트 등록
 app.use('/camera', cameraRoutes);
 
-// 🎬 정적 파일 서빙 (날씨 영상용)
-app.use('/static', express.static('public'));
-
 // ✅ 필수 API 키
 const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
 
@@ -58,28 +51,6 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 console.log('--- Lumee 백엔드 서버 시작 ---');
-
-// LED 라우트 설정
-setupLEDRoutes(app);
-
-// 🔥🔥🔥 [소리 전용] 아두이노 COM3 연결 설정 🔥🔥🔥
-let soundSerial = null;
-try {
-  soundSerial = new SerialPort({
-    path: 'COM3', // 소리 전용 아두이노 포트
-    baudRate: 9600
-  });
-
-  soundSerial.on('open', () => {
-    console.log('🔊 Sound Arduino connected on COM14');
-  });
-
-  soundSerial.on('error', (err) => {
-    console.error('⚠️ Sound Arduino Error:', err.message);
-  });
-} catch (e) {
-  console.log('⚠️ COM3 port not found. Sound disabled.');
-}
 
 // ---------------------------------------------------------
 
@@ -103,35 +74,7 @@ app.post('/generate-title', async (req, res) => {
   }
 });
 
-// 🔥 [필수 함수] 날씨 ID를 문자열 조건으로 변환
-function mapWeatherIdToCondition(id) {
-  if (id >= 200 && id < 300) return "Thunderstorm";
-  if (id >= 300 && id < 500) return "Drizzle";
-  if (id >= 500 && id < 600) return "Rain";
-  if (id >= 600 && id < 700) return "Snow";
-  if (id >= 700 && id < 800) return "Mist";
-  if (id === 800) return "Clear";
-  if (id > 800) return "Clouds";
-  return "Clear";
-}
 
-// 🎬 [날씨 영상] 날씨 조건에 따른 영상 URL 반환
-function getWeatherVideoUrl(weatherCondition) {
-  const baseUrl = 'http://localhost:4000'; // 백엔드 서버 주소
-
-  const videoMap = {
-    'Rain': `${baseUrl}/static/videos/rain.html`,
-    'Snow': `${baseUrl}/static/videos/snow.html`,
-    'Mist': `${baseUrl}/static/videos/mist.html`,        // HTML wrapper 사용
-    'Clear': `${baseUrl}/static/videos/clear.html`,
-    'Clouds': `${baseUrl}/static/videos/clouds.html`,    // HTML wrapper 사용
-    // Thunderstorm과 Drizzle은 제외됨 - Clear로 대체
-    'Thunderstorm': `${baseUrl}/static/videos/clear.html`,
-    'Drizzle': `${baseUrl}/static/videos/rain.html`
-  };
-
-  return videoMap[weatherCondition] || `${baseUrl}/static/videos/clear.html`;
-}
 
 // ✨ LLM 중심 채팅 엔드포인트 ✨
 app.post('/chat', async (req, res) => {
@@ -173,58 +116,8 @@ app.post('/chat', async (req, res) => {
     const reply = finalResponse.candidates?.[0]?.content?.parts?.[0]?.text || '죄송해요, 답변 생성에 실패했어요.';
     const responsePayload = { reply };
 
-    // 5. LED 및 소리 제어 로직
+    // 날씨 데이터 찾기
     const fullWeather = toolOutputs.find(o => o.tool_function_name === 'get_full_weather_with_context');
-
-    if (fullWeather && fullWeather.output) {
-      const w = fullWeather.output.weather || {};
-      const a = fullWeather.output.air || {};
-      const p = fullWeather.output.pollen || {};
-
-      const mappedWeatherData = {
-        temperature: w.temp,
-        feelsLike: w.feelsLike,
-        pm10: a.pm10 || 0,
-        pm25: a.pm25 || 0,
-        ozone: 0,
-        uvIndex: w.uvi || 0,
-        pollen: p.count || 0,
-        precipitation: w.rain_1h || 0,
-        weather: mapWeatherIdToCondition(w.weatherId), // 함수 사용
-        clouds: w.clouds || 0,
-        humidity: w.humidity || 0
-      };
-
-      // LED 상태 결정
-      let ledStatus = determineLEDStatus(mappedWeatherData);
-
-      if (userProfile) {
-        ledStatus = adjustBrightnessForUser(ledStatus, userProfile);
-      }
-
-      // 🔥 [소리 출력] COM3 아두이노로 명령 전송
-      if (soundSerial && soundSerial.isOpen && ledStatus.soundId) {
-        soundSerial.write(ledStatus.soundId.toString());
-        console.log(`🔊 Sent sound command to COM3: ${ledStatus.soundId}`);
-      }
-
-      responsePayload.ledStatus = {
-        r: ledStatus.color.r,
-        g: ledStatus.color.g,
-        b: ledStatus.color.b,
-        effect: ledStatus.effect,
-        duration: ledStatus.duration,
-        priority: ledStatus.priority,
-        message: ledStatus.message,
-        s: ledStatus.soundId
-      };
-
-      // 🎬 [날씨 영상] 날씨 조건에 따른 영상 URL 추가
-      const weatherCondition = mappedWeatherData.weather;
-      const videoUrl = getWeatherVideoUrl(weatherCondition);
-      responsePayload.videoUrl = videoUrl;
-      console.log(`🎬 Weather video URL: ${videoUrl} (condition: ${weatherCondition})`);
-    }
 
     // 그래프 및 미세먼지 정보 추가
     const lowerInput = userInput.toLowerCase();
