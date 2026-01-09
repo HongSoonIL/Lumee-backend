@@ -7,30 +7,28 @@ const sharp = require('sharp');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// 라즈베리파이 주소 (환경변수에서 가져오기)
-const RASPI_CAMERA_URL = process.env.RASPI_CAMERA_URL || 'http://192.168.50.48:5000';
+// 라즈베리파이 주소 (더 이상 사용하지 않음 - 웹 브라우저 카메라 사용)
+// const RASPI_CAMERA_URL = process.env.RASPI_CAMERA_URL || 'http://192.168.50.48:5000';
 
-console.log(`📹 라즈베리파이 카메라 주소: ${RASPI_CAMERA_URL}`);
+// console.log(`📹 라즈베리파이 카메라 주소: ${RASPI_CAMERA_URL}`);
 
 // ========== 촬영 및 분석 API ==========
+// 웹 브라우저에서 촬영한 이미지를 받아 분석합니다
 router.post('/capture', async (req, res) => {
   try {
-    const { uid } = req.body;
-    console.log(`📸 촬영 요청 수신 (UID: ${uid})`);
-    console.log(`📡 라즈베리파이 요청: ${RASPI_CAMERA_URL}/capture`);
+    const { uid, image } = req.body;
+    console.log(`📸 촬영 이미지 수신 (UID: ${uid})`);
 
-    // 1. 라즈베리파이에 촬영 요청
-    const raspiResponse = await axios.post(
-      `${RASPI_CAMERA_URL}/capture`,
-      {},
-      { timeout: 15000 } // 15초 타임아웃
-    );
-
-    if (raspiResponse.data.status !== 'success' || !raspiResponse.data.image) {
-      throw new Error('라즈베리파이 촬영 실패');
+    // 1. 클라이언트에서 전송한 이미지 검증
+    if (!image) {
+      return res.status(400).json({
+        success: false,
+        error: '이미지가 전송되지 않았습니다. 카메라로 촬영한 이미지를 전송해주세요.'
+      });
     }
 
-    const base64Image = raspiResponse.data.image;
+    // base64 이미지에서 data URL prefix 제거 (있는 경우)
+    const base64Image = image.replace(/^data:image\/\w+;base64,/, '');
     console.log(`✅ 이미지 수신 완료 (크기: ${base64Image.length} bytes)`);
 
     // 2. 이미지 최적화
@@ -58,13 +56,69 @@ router.post('/capture', async (req, res) => {
 
   } catch (error) {
     console.error('❌ 카메라 처리 오류:', error.message);
-    
+
     // 에러 상세 정보 제공
     let errorMessage = error.message;
-    if (error.code === 'ECONNREFUSED') {
-      errorMessage = '라즈베리파이에 연결할 수 없습니다. IP 주소와 서버 실행 상태를 확인해주세요.';
-    } else if (error.code === 'ETIMEDOUT') {
-      errorMessage = '라즈베리파이 응답 시간 초과. 네트워크 연결을 확인해주세요.';
+    if (error.message.includes('Invalid base64')) {
+      errorMessage = '이미지 형식이 올바르지 않습니다. base64 형식의 이미지를 전송해주세요.';
+    }
+
+    res.status(500).json({
+      success: false,
+      error: errorMessage,
+      details: error.code
+    });
+  }
+});
+
+// ========== 분석 API (별칭) ==========
+// /analyze 엔드포인트는 /capture와 동일한 기능을 제공합니다 (프론트엔드 호환성)
+router.post('/analyze', async (req, res) => {
+  try {
+    const { uid, image } = req.body;
+    console.log(`📸 촬영 이미지 수신 (UID: ${uid}) - /analyze 엔드포인트`);
+
+    // 1. 클라이언트에서 전송한 이미지 검증
+    if (!image) {
+      return res.status(400).json({
+        success: false,
+        error: '이미지가 전송되지 않았습니다. 카메라로 촬영한 이미지를 전송해주세요.'
+      });
+    }
+
+    // base64 이미지에서 data URL prefix 제거 (있는 경우)
+    const base64Image = image.replace(/^data:image\/\w+;base64,/, '');
+    console.log(`✅ 이미지 수신 완료 (크기: ${base64Image.length} bytes)`);
+
+    // 2. 이미지 최적화
+    const imageBuffer = Buffer.from(base64Image, 'base64');
+    const optimizedImage = await sharp(imageBuffer)
+      .resize(1024, 1024, { fit: 'inside' })
+      .jpeg({ quality: 85 })
+      .toBuffer();
+
+    const optimizedBase64 = optimizedImage.toString('base64');
+    console.log(`🔄 이미지 최적화 완료 (크기: ${optimizedBase64.length} bytes)`);
+
+    // 3. Gemini Vision API로 분석
+    console.log('🤖 Gemini 분석 시작...');
+    const analysisResult = await analyzeClothing(optimizedBase64);
+    console.log('✅ 분석 완료:', analysisResult);
+
+    // 4. 결과 반환
+    res.json({
+      success: true,
+      image: optimizedBase64,
+      analysis: analysisResult,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ 카메라 처리 오류:', error.message);
+
+    let errorMessage = error.message;
+    if (error.message.includes('Invalid base64')) {
+      errorMessage = '이미지 형식이 올바르지 않습니다. base64 형식의 이미지를 전송해주세요.';
     }
 
     res.status(500).json({
@@ -135,40 +189,42 @@ async function analyzeClothing(base64Image) {
 }
 
 // ========== 카메라 상태 확인 ==========
-router.get('/status', async (req, res) => {
-  try {
-    const response = await axios.get(`${RASPI_CAMERA_URL}/health`, { timeout: 3000 });
-    res.json({
-      status: 'connected',
-      raspi: response.data,
-      backend_url: RASPI_CAMERA_URL
-    });
-  } catch (error) {
-    res.json({
-      status: 'disconnected',
-      error: error.message,
-      backend_url: RASPI_CAMERA_URL
-    });
-  }
-});
+// 웹 브라우저 카메라를 사용하므로 라즈베리파이 상태 확인은 더 이상 필요하지 않음
+// router.get('/status', async (req, res) => {
+//   try {
+//     const response = await axios.get(`${RASPI_CAMERA_URL}/health`, { timeout: 3000 });
+//     res.json({
+//       status: 'connected',
+//       raspi: response.data,
+//       backend_url: RASPI_CAMERA_URL
+//     });
+//   } catch (error) {
+//     res.json({
+//       status: 'disconnected',
+//       error: error.message,
+//       backend_url: RASPI_CAMERA_URL
+//     });
+//   }
+// });
 
-// ========== 스트림 제어 (필요시) ==========
-router.post('/start-stream', async (req, res) => {
-  try {
-    await axios.post(`${RASPI_CAMERA_URL}/start_stream`);
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+// ========== 스트림 제어 ==========
+// 웹 브라우저 카메라를 사용하므로 스트림 제어는 클라이언트에서 직접 처리
+// router.post('/start-stream', async (req, res) => {
+//   try {
+//     await axios.post(`${RASPI_CAMERA_URL}/start_stream`);
+//     res.json({ success: true });
+//   } catch (error) {
+//     res.status(500).json({ error: error.message });
+//   }
+// });
 
-router.post('/stop-stream', async (req, res) => {
-  try {
-    await axios.post(`${RASPI_CAMERA_URL}/stop_stream`);
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+// router.post('/stop-stream', async (req, res) => {
+//   try {
+//     await axios.post(`${RASPI_CAMERA_URL}/stop_stream`);
+//     res.json({ success: true });
+//   } catch (error) {
+//     res.status(500).json({ error: error.message });
+//   }
+// });
 
 module.exports = router;
