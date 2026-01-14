@@ -3,10 +3,6 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const http = require('http');
-
-// 라즈베리파이 통신을 위한 모듈
-const { WebSocketServer } = require('ws');
 
 // 라우트 파일 임포트
 const cameraRoutes = require('./cameraRoutes');
@@ -46,24 +42,10 @@ app.use('/camera', cameraRoutes);
 // ✅ 필수 API 키
 const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
 
-// Express 앱을 기반으로 HTTP 서버 생성 (웹소켓용)
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
-
 console.log('--- Lumee 백엔드 서버 시작 ---');
 
 // ---------------------------------------------------------
 
-// 라즈베리파이 노크 신호 처리
-app.post('/knock', (req, res) => {
-  console.log('[HTTP] ✊ 라즈베리파이로부터 "KNOCK" 신호 수신!');
-  wss.clients.forEach(client => {
-    if (client.readyState === client.OPEN) {
-      client.send('KNOCK');
-    }
-  });
-  res.status(200).send('OK');
-});
 
 // 채팅 제목 자동 생성 API
 app.post('/generate-title', async (req, res) => {
@@ -219,7 +201,6 @@ app.post('/weather-graph', async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log(`[HTTP] API 서버가 ${PORT} 포트에서 실행 중입니다.`);
-  console.log(`[웹소켓] 통신 서버가 ${PORT} 포트에서 함께 실행 중입니다.`);
 });
