@@ -7,11 +7,6 @@ const sharp = require('sharp');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// 라즈베리파이 주소 (더 이상 사용하지 않음 - 웹 브라우저 카메라 사용)
-// const RASPI_CAMERA_URL = process.env.RASPI_CAMERA_URL || 'http://192.168.50.48:5000';
-
-// console.log(`📹 라즈베리파이 카메라 주소: ${RASPI_CAMERA_URL}`);
-
 // ========== 촬영 및 분석 API ==========
 // 웹 브라우저에서 촬영한 이미지를 받아 분석합니다
 router.post('/capture', async (req, res) => {
@@ -187,44 +182,5 @@ async function analyzeClothing(base64Image) {
     };
   }
 }
-
-// ========== 카메라 상태 확인 ==========
-// 웹 브라우저 카메라를 사용하므로 라즈베리파이 상태 확인은 더 이상 필요하지 않음
-// router.get('/status', async (req, res) => {
-//   try {
-//     const response = await axios.get(`${RASPI_CAMERA_URL}/health`, { timeout: 3000 });
-//     res.json({
-//       status: 'connected',
-//       raspi: response.data,
-//       backend_url: RASPI_CAMERA_URL
-//     });
-//   } catch (error) {
-//     res.json({
-//       status: 'disconnected',
-//       error: error.message,
-//       backend_url: RASPI_CAMERA_URL
-//     });
-//   }
-// });
-
-// ========== 스트림 제어 ==========
-// 웹 브라우저 카메라를 사용하므로 스트림 제어는 클라이언트에서 직접 처리
-// router.post('/start-stream', async (req, res) => {
-//   try {
-//     await axios.post(`${RASPI_CAMERA_URL}/start_stream`);
-//     res.json({ success: true });
-//   } catch (error) {
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
-// router.post('/stop-stream', async (req, res) => {
-//   try {
-//     await axios.post(`${RASPI_CAMERA_URL}/stop_stream`);
-//     res.json({ success: true });
-//   } catch (error) {
-//     res.status(500).json({ error: error.message });
-//   }
-// });
 
 module.exports = router;
