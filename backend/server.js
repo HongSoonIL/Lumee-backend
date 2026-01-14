@@ -79,7 +79,13 @@ app.post('/generate-title', async (req, res) => {
 // ✨ LLM 중심 채팅 엔드포인트 ✨
 app.post('/chat', async (req, res) => {
   const { userInput, coords, uid } = req.body;
-  console.log(`💬 사용자 질문 (UID: ${uid}):`, userInput);
+
+  if (uid) {
+    console.log(`💬 사용자 질문 (인증됨 - UID: ${uid}):`, userInput);
+  } else {
+    console.log(`💬 사용자 질문 (게스트):`, userInput);
+  }
+
   conversationStore.addUserMessage(userInput);
 
   try {
