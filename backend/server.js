@@ -3,9 +3,11 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const { google } = require('googleapis');
 
 // 라우트 파일 임포트
 const cameraRoutes = require('./cameraRoutes');
+const { extractScheduleLocations } = require('./scheduleLocationExtractor');
 
 // 서버 시작 시 API 키 확인 (테스트)
 console.log('=== API 키 상태 확인 ===');
@@ -56,7 +58,61 @@ app.post('/generate-title', async (req, res) => {
   }
 });
 
+// Google Calendar API
+app.post('/calendar/events', async (req, res) => {
+  const { accessToken } = req.body;
 
+  if (!accessToken) {
+    return res.status(400).json({ error: 'Access Token is required' });
+  }
+
+  try {
+    const oauth2Client = new google.auth.OAuth2();
+    oauth2Client.setCredentials({ access_token: accessToken });
+
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // 오늘부터 일주일 뒤까지의 일정 가져오기
+    const now = new Date();
+    const nextWeek = new Date();
+    nextWeek.setDate(now.getDate() + 7);
+
+    const response = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: now.toISOString(),
+      timeMax: nextWeek.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+    });
+
+    const events = response.data.items.map(event => ({
+      summary: event.summary,
+      location: event.location || 'Unknown Location', // 위치 정보
+      start: event.start.dateTime || event.start.date,
+      end: event.end.dateTime || event.end.date,
+      description: event.description
+    }));
+
+    // Gemini AI를 사용하여 위치 정보 추출 및 추가
+    console.log('🤖 Gemini AI로 일정에서 위치 정보 추출 중...');
+    const enrichedEvents = await extractScheduleLocations(events);
+    console.log(`✅ 위치 추출 완료: ${enrichedEvents.length}개 일정 처리됨`);
+
+    // 디버깅: 실제 반환되는 데이터 확인
+    console.log('📤 프론트엔드로 전송하는 일정 데이터:');
+    enrichedEvents.forEach((event, index) => {
+      console.log(`  [${index}] ${event.summary} - ${event.start}`);
+      console.log(`      장소: ${event.location}`);
+      console.log(`      날씨조회위치: ${event.weatherLocation}`);
+    });
+
+    res.json(enrichedEvents);
+
+  } catch (error) {
+    console.error('Calendar API Error:', error);
+    res.status(500).json({ error: 'Failed to fetch calendar events' });
+  }
+});
 
 // ✨ LLM 중심 채팅 엔드포인트 ✨
 app.post('/chat', async (req, res) => {

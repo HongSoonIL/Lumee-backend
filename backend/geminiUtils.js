@@ -1,5 +1,6 @@
 const axios = require('axios');
 const conversationStore = require('./conversationStore');
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 /**
  * Gemini API 호출 관련 로직을 모아놓은 유틸리티 파일입니다.
@@ -12,6 +13,10 @@ const geminiApi = axios.create({
   baseURL: 'https://generativelanguage.googleapis.com/v1beta/models',
   params: { key: GEMINI_API_KEY },
 });
+
+// Gemini 모델 인스턴스 생성 (scheduleLocationExtractor에서 사용)
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 // 🔥 언어 감지 함수 추가
 function detectLanguage(text) {
@@ -293,4 +298,5 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
 module.exports = {
   callGeminiForToolSelection,
   callGeminiForFinalResponse,
+  model,  // scheduleLocationExtractor에서 사용
 };
