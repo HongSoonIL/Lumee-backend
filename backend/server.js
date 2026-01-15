@@ -116,7 +116,7 @@ app.post('/calendar/events', async (req, res) => {
 
 // ✨ LLM 중심 채팅 엔드포인트 ✨
 app.post('/chat', async (req, res) => {
-  const { userInput, coords, uid } = req.body;
+  const { userInput, coords, uid, schedule } = req.body;
 
   if (uid) {
     console.log(`💬 사용자 질문 (인증됨 - UID: ${uid}):`, userInput);
@@ -129,6 +129,12 @@ app.post('/chat', async (req, res) => {
   try {
     // 1. 사용자 프로필 로드
     const userProfile = await getUserProfile(uid);
+
+    // 🔥 2. Google Calendar 일정을 userProfile에 병합
+    if (schedule && Array.isArray(schedule) && schedule.length > 0) {
+      userProfile.schedule = schedule;
+      console.log(`📅 Google Calendar 일정 ${schedule.length}개 병합됨`);
+    }
 
     // 2. 도구 선택
     const toolSelectionResponse = await callGeminiForToolSelection(userInput, availableTools);

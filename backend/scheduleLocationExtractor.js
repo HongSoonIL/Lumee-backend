@@ -84,4 +84,64 @@ async function extractScheduleLocations(events) {
   }
 }
 
-module.exports = { extractScheduleLocations };
+/**
+ * 사용자의 일정에서 특정 날짜에 해당하는 위치 정보를 추출합니다.
+ * @param {Object} userProfile - 사용자 프로필 객체 (schedule 필드 포함)
+ * @param {Date} requestedDate - 조회할 날짜
+ * @returns {string|null} - 추출된 위치 정보 또는 null
+ */
+function getLocationFromSchedule(userProfile, requestedDate) {
+  // 1. 유효성 검사
+  if (!userProfile || !userProfile.schedule || !Array.isArray(userProfile.schedule)) {
+    console.log('⚠️ 유효한 일정 데이터가 없습니다.');
+    return null;
+  }
+
+  if (!requestedDate || isNaN(requestedDate.getTime())) {
+    console.log('⚠️ 유효하지 않은 날짜입니다.');
+    return null;
+  }
+
+  // 2. 날짜를 YYYY-MM-DD 형식으로 변환
+  const targetDateStr = requestedDate.toISOString().split('T')[0]; // YYYY-MM-DD
+  console.log(`🔍 일정 검색 날짜: ${targetDateStr}`);
+
+  // 3. 일정에서 해당 날짜 찾기
+  const matchingSchedule = userProfile.schedule.find(schedule => {
+    if (!schedule.date) return false;
+
+    // schedule.date가 다양한 형식일 수 있으므로 파싱
+    let scheduleDate;
+    if (schedule.date.includes('T')) {
+      // ISO 형식 (2026-01-16T18:30:00+09:00)
+      scheduleDate = schedule.date.split('T')[0];
+    } else {
+      // 이미 YYYY-MM-DD 형식
+      scheduleDate = schedule.date;
+    }
+
+    return scheduleDate === targetDateStr;
+  });
+
+  // 4. 위치 추출
+  if (!matchingSchedule) {
+    console.log(`📅 ${targetDateStr}에 해당하는 일정이 없습니다.`);
+    return null;
+  }
+
+  // weatherLocation 우선, 없으면 location 사용
+  const location = matchingSchedule.weatherLocation || matchingSchedule.location;
+
+  if (location) {
+    console.log(`✅ 일정 발견: "${matchingSchedule.summary || matchingSchedule.title}" - 위치: ${location}`);
+    return location;
+  } else {
+    console.log(`📅 일정은 있으나 위치 정보가 없습니다: "${matchingSchedule.summary || matchingSchedule.title}"`);
+    return null;
+  }
+}
+
+module.exports = {
+  extractScheduleLocations,
+  getLocationFromSchedule
+};
