@@ -12,8 +12,8 @@ const { getWeatherByCoords } = require('./weatherUtils');
 // 웹 브라우저에서 촬영한 이미지를 받아 분석합니다
 router.post('/capture', async (req, res) => {
   try {
-    const { uid, image, latitude, longitude } = req.body;
-    console.log(`📸 촬영 이미지 수신 (UID: ${uid})`);
+    const { uid, image, latitude, longitude, language = 'en' } = req.body;
+    console.log(`📸 촬영 이미지 수신 (UID: ${uid}, 언어: ${language})`);
 
     // 1. 클라이언트에서 전송한 이미지 검증
     if (!image) {
@@ -51,7 +51,7 @@ router.post('/capture', async (req, res) => {
 
     // 4. Gemini Vision API로 분석
     console.log('🤖 Gemini 분석 시작...');
-    const analysisResult = await analyzeClothing(optimizedBase64, weatherData);
+    const analysisResult = await analyzeClothing(optimizedBase64, weatherData, language);
     console.log('✅ 분석 완료:', analysisResult);
 
     // 5. 결과 반환
@@ -88,8 +88,8 @@ router.post('/capture', async (req, res) => {
 // /analyze 엔드포인트는 /capture와 동일한 기능을 제공합니다 (프론트엔드 호환성)
 router.post('/analyze', async (req, res) => {
   try {
-    const { uid, image, latitude, longitude } = req.body;
-    console.log(`📸 촬영 이미지 수신 (UID: ${uid}) - /analyze 엔드포인트`);
+    const { uid, image, latitude, longitude, language = 'en' } = req.body;
+    console.log(`📸 촬영 이미지 수신 (UID: ${uid}, 언어: ${language}) - /analyze 엔드포인트`);
 
     // 1. 클라이언트에서 전송한 이미지 검증
     if (!image) {
@@ -127,7 +127,7 @@ router.post('/analyze', async (req, res) => {
 
     // 4. Gemini Vision API로 분석
     console.log('🤖 Gemini 분석 시작...');
-    const analysisResult = await analyzeClothing(optimizedBase64, weatherData);
+    const analysisResult = await analyzeClothing(optimizedBase64, weatherData, language);
     console.log('✅ 분석 완료:', analysisResult);
 
     // 5. 결과 반환
@@ -160,16 +160,20 @@ router.post('/analyze', async (req, res) => {
 });
 
 // ========== Gemini Vision 분석 함수 ==========
-async function analyzeClothing(base64Image, weatherData) {
+async function analyzeClothing(base64Image, weatherData, language = 'en') {
   try {
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-    // 날씨 정보를 간단히 요약
-    const weatherInfo = weatherData
-      ? `현재 날씨: ${weatherData.temp}°C (체감 ${weatherData.feelsLike}°C), ${weatherData.description}`
-      : '날씨 정보 없음';
+    // 날씨 정보를 언어에 맞게 포맷
+    let weatherInfo, prompt;
 
-    const prompt = `
+    if (language === 'ko') {
+      // ========== 한국어 프롬프트 ==========
+      weatherInfo = weatherData
+        ? `현재 날씨: ${weatherData.temp}°C (체감 ${weatherData.feelsLike}°C), ${weatherData.description}`
+        : '날씨 정보 없음';
+
+      prompt = `
 이 사진 속 인물의 옷차림을 분석하고, ${weatherData ? '현재 날씨에 적합한지' : ''} 평가해줘.
 
 ${weatherInfo}
@@ -195,6 +199,39 @@ ${weatherData ? `현재 ${weatherData.temp}°C 날씨에 이 옷차림이 적절
   "weather_recommendation": "23°C에 딱 맞는 옷차림이에요!"
 }
 `;
+    } else {
+      // ========== 영어 프롬프트 ==========
+      weatherInfo = weatherData
+        ? `Current weather: ${weatherData.temp}°C (feels like ${weatherData.feelsLike}°C), ${weatherData.description}`
+        : 'No weather data available';
+
+      prompt = `
+Analyze the outfit in this photo and evaluate ${weatherData ? 'if it\'s suitable for the current weather' : 'the clothing style'}.
+
+${weatherInfo}
+
+Respond in JSON format only (pure JSON without Markdown):
+{
+  "items": ["clothing items worn"],
+  "colors": ["main colors"],
+  "style": "overall style (e.g., casual, formal, sporty)",
+  "warmth_level": 1~5 (1: very cool, 5: very warm),
+  "weather_recommendation": "${weatherData ? 'brief one-line advice based on current weather' : 'one-line comment about the outfit'}"
+}
+
+weather_recommendation must be a single short and clear sentence.
+${weatherData ? `For the current ${weatherData.temp}°C weather, briefly mention if this outfit is appropriate and if any items should be added or removed.` : ''}
+
+Example:
+{
+  "items": ["short-sleeve t-shirt", "jeans"],
+  "colors": ["white", "blue"],
+  "style": "casual",
+  "warmth_level": 2,
+  "weather_recommendation": "Perfect outfit for 23°C!"
+}
+`;
+    }
 
     const result = await model.generateContent([
       prompt,
@@ -218,15 +255,29 @@ ${weatherData ? `현재 ${weatherData.temp}°C 날씨에 이 옷차림이 적절
 
   } catch (error) {
     console.error('❌ Gemini 분석 오류:', error);
-    return {
-      items: ["분석 실패"],
-      colors: [],
-      style: "알 수 없음",
-      warmth_level: 3,
-      weather_recommendation: weatherData
-        ? `현재 ${weatherData.temp}°C 날씨에 대한 이미지 분석을 완료할 수 없습니다.`
-        : "이미지를 분석할 수 없습니다."
-    };
+
+    // 언어별 오류 메시지
+    const errorMessage = language === 'ko'
+      ? {
+        items: ["분석 실패"],
+        colors: [],
+        style: "알 수 없음",
+        warmth_level: 3,
+        weather_recommendation: weatherData
+          ? `현재 ${weatherData.temp}°C 날씨에 대한 이미지 분석을 완료할 수 없습니다.`
+          : "이미지를 분석할 수 없습니다."
+      }
+      : {
+        items: ["Analysis failed"],
+        colors: [],
+        style: "Unknown",
+        warmth_level: 3,
+        weather_recommendation: weatherData
+          ? `Unable to analyze the image for current ${weatherData.temp}°C weather.`
+          : "Unable to analyze the image."
+      };
+
+    return errorMessage;
   }
 }
 
