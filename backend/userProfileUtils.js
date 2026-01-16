@@ -15,7 +15,14 @@ async function saveUserProfile(uid, profileData) {
 // 사용자 프로필 불러오기 (없으면 생성)
 async function getUserProfile(uid) {
   try {
-    if (!uid) return null; // uid가 없으면 리턴
+    // uid가 없으면 게스트 프로필 반환
+    if (!uid) {
+      console.log('👤 게스트 사용자 - 기본 프로필 사용');
+      return {
+        name: 'user',
+        schedule: '일정 없음'
+      };
+    }
 
     const userRef = db.collection('users').doc(uid);
     const doc = await userRef.get();
