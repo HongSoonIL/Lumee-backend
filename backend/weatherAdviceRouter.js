@@ -1,6 +1,6 @@
 // weatherAdviceRouter.js
 const { getWeather } = require('./weatherUtils');
-const { getAirQuality, getPollenAmbee } = require('./airPollenUtils');
+const { getAirQuality, getPollenGoogle } = require('./airPollenUtils');
 const conversationStore = require('./conversationStore');
 const axios = require('axios');
 const { getUserProfile } = require('./userProfileUtils');
@@ -14,11 +14,11 @@ function isAirRelated(text) {
 
 async function handleAirAdvice({ lat, lon, locationName, uid }, res) {
   const air = await getAirQuality(lat, lon);
-  
+
   if (!air) {
     return res.json({ reply: '죄송해요. 미세먼지 정보를 불러오지 못했어요.' });
   }
-  
+
   // 사용자 정보 포맷 구성 (일정 추가됨)
   const userInfo = await getUserProfile(uid);
   const userText = userInfo ? `
@@ -37,7 +37,7 @@ ${userText}
   
   이 정보를 바탕으로 외출 시 주의할 점이나 마스크 착용 등에 대해 3~4문장으로 자연스럽게 조언해 주세요.
   `;
-  
+
   const contents = [...conversationStore.getHistory(), { role: 'user', parts: [{ text: prompt }] }];
   try {
     const result = await axios.post(
@@ -47,13 +47,14 @@ ${userText}
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || '답변을 생성하지 못했어요.';
     conversationStore.addBotMessage(reply);
     conversationStore.trimTo(10);
-    res.json({ 
-          reply,
-        airQuality: {
+    res.json({
+      reply,
+      airQuality: {
         pm25: air?.pm25,
         pm10: air?.pm10
-        } 
-  });  } catch (e) {
+      }
+    });
+  } catch (e) {
     console.error('❌ Gemini 호출 오류 (미세먼지):', e.message);
     res.json({ reply: '미세먼지에 대한 조언 생성에 실패했어요.' });
   }
@@ -65,8 +66,8 @@ function isPollenRelated(text) {
 }
 
 async function handlePollenAdvice({ lat, lon, locationName, uid }, res) {
-  const pollen = await getPollenAmbee(lat, lon);
-  
+  const pollen = await getPollenGoogle(lat, lon);
+
   if (!pollen) {
     return res.json({ reply: '죄송해요. 꽃가루 정보를 불러오지 못했어요.' });
   }
@@ -140,9 +141,9 @@ async function handleUmbrellaAdvice({ lat, lon, locationName, uid }, res) {
       rainInfo = `현재 ${locationName}에는 비가 오지 않고, 강수 확률도 낮아요.`;
     }
 
-  // 사용자 정보 포맷 구성 (일정 추가됨)
-  const userInfo = await getUserProfile(uid);
-  const userText = userInfo ? `
+    // 사용자 정보 포맷 구성 (일정 추가됨)
+    const userInfo = await getUserProfile(uid);
+    const userText = userInfo ? `
 사용자 정보:
 - 이름: ${userInfo.name}
 - 민감 요소: ${userInfo.sensitiveFactors?.join(', ') || '없음'}
@@ -150,7 +151,7 @@ async function handleUmbrellaAdvice({ lat, lon, locationName, uid }, res) {
 - 일정: ${userInfo.schedule || '없음'}
 ` : '';
 
-  const prompt = `
+    const prompt = `
 ${userText}
 현재 "${locationName}"의 날씨 정보는 다음과 같아요:
 - 상태: ${weather.condition}
@@ -191,9 +192,9 @@ async function handleClothingAdvice({ lat, lon, locationName, uid }, res) {
     const weather = await getWeather(lat, lon);
     if (!weather) return res.json({ reply: '날씨 정보를 불러오지 못했어요.' });
 
-  // 사용자 정보 포맷 구성 (일정 추가됨)
-  const userInfo = await getUserProfile(uid);
-  const userText = userInfo ? `
+    // 사용자 정보 포맷 구성 (일정 추가됨)
+    const userInfo = await getUserProfile(uid);
+    const userText = userInfo ? `
 사용자 정보:
 - 이름: ${userInfo.name}
 - 민감 요소: ${userInfo.sensitiveFactors?.join(', ') || '없음'}
@@ -201,7 +202,7 @@ async function handleClothingAdvice({ lat, lon, locationName, uid }, res) {
 - 일정: ${userInfo.schedule || '없음'}
 ` : '';
 
-  const prompt = `
+    const prompt = `
 ${userText}
 지금 "${locationName}"의 날씨는 다음과 같습니다:
 - 현재 기온: ${weather.temp}℃
@@ -242,9 +243,9 @@ async function handleHumidityAdvice({ lat, lon, locationName, uid }, res) {
     const weather = await getWeather(lat, lon);
     if (!weather) return res.json({ reply: '날씨 정보를 불러오지 못했어요.' });
 
-  // 사용자 정보 포맷 구성 (일정 추가됨)
-  const userInfo = await getUserProfile(uid);
-  const userText = userInfo ? `
+    // 사용자 정보 포맷 구성 (일정 추가됨)
+    const userInfo = await getUserProfile(uid);
+    const userText = userInfo ? `
 사용자 정보:
 - 이름: ${userInfo.name}
 - 민감 요소: ${userInfo.sensitiveFactors?.join(', ') || '없음'}
@@ -252,7 +253,7 @@ async function handleHumidityAdvice({ lat, lon, locationName, uid }, res) {
 - 일정: ${userInfo.schedule || '없음'}
 ` : '';
 
-  const prompt = `
+    const prompt = `
 ${userText}
 현재 "${locationName}"의 날씨 정보는 다음과 같아요:
 - 기온: ${weather.temp}℃
@@ -291,9 +292,9 @@ async function handleVisibilityAdvice({ lat, lon, locationName, uid }, res) {
     const weather = await getWeather(lat, lon);
     if (!weather) return res.json({ reply: '날씨 정보를 불러오지 못했어요.' });
 
-  // 사용자 정보 포맷 구성 (일정 추가됨)
-  const userInfo = await getUserProfile(uid);
-  const userText = userInfo ? `
+    // 사용자 정보 포맷 구성 (일정 추가됨)
+    const userInfo = await getUserProfile(uid);
+    const userText = userInfo ? `
 사용자 정보:
 - 이름: ${userInfo.name}
 - 민감 요소: ${userInfo.sensitiveFactors?.join(', ') || '없음'}
@@ -301,7 +302,7 @@ async function handleVisibilityAdvice({ lat, lon, locationName, uid }, res) {
 - 일정: ${userInfo.schedule || '없음'}
 ` : '';
 
-  const prompt = `
+    const prompt = `
 ${userText}
 현재 "${locationName}"의 가시거리는 약 ${weather.visibility}미터입니다.
 
@@ -346,9 +347,9 @@ async function handleSunTimeAdvice({ lat, lon, locationName, uid }, res) {
       minute: '2-digit'
     });
 
-  // 사용자 정보 포맷 구성 (일정 추가됨)
-  const userInfo = await getUserProfile(uid);
-  const userText = userInfo ? `
+    // 사용자 정보 포맷 구성 (일정 추가됨)
+    const userInfo = await getUserProfile(uid);
+    const userText = userInfo ? `
 사용자 정보:
 - 이름: ${userInfo.name}
 - 민감 요소: ${userInfo.sensitiveFactors?.join(', ') || '없음'}
@@ -356,7 +357,7 @@ async function handleSunTimeAdvice({ lat, lon, locationName, uid }, res) {
 - 일정: ${userInfo.schedule || '없음'}
 ` : '';
 
-  const prompt = `
+    const prompt = `
 ${userText}
 "${locationName}"의 오늘 일출/일몰 시간은 다음과 같습니다:
 - 일출: ${sunriseStr}
@@ -402,9 +403,9 @@ async function handleUVAdvice({ lat, lon, locationName, uid }, res) {
     else if (uv < 11) level = '매우 높음';
     else level = '위험';
 
-  // 사용자 정보 포맷 구성 (일정 추가됨)
-  const userInfo = await getUserProfile(uid);
-  const userText = userInfo ? `
+    // 사용자 정보 포맷 구성 (일정 추가됨)
+    const userInfo = await getUserProfile(uid);
+    const userText = userInfo ? `
 사용자 정보:
 - 이름: ${userInfo.name}
 - 민감 요소: ${userInfo.sensitiveFactors?.join(', ') || '없음'}
@@ -412,7 +413,7 @@ async function handleUVAdvice({ lat, lon, locationName, uid }, res) {
 - 일정: ${userInfo.schedule || '없음'}
 ` : '';
 
-  const prompt = `
+    const prompt = `
 ${userText}
 현재 "${locationName}"의 자외선 지수는 ${uv}로 "${level}" 수준입니다.
 
@@ -458,9 +459,9 @@ async function handleWindAdvice({ lat, lon, locationName, uid }, res) {
     const deg = weather.windDeg;
     const direction = getWindDirectionText(deg);
 
-  // 사용자 정보 포맷 구성 (일정 추가됨)
-  const userInfo = await getUserProfile(uid);
-  const userText = userInfo ? `
+    // 사용자 정보 포맷 구성 (일정 추가됨)
+    const userInfo = await getUserProfile(uid);
+    const userText = userInfo ? `
 사용자 정보:
 - 이름: ${userInfo.name}
 - 민감 요소: ${userInfo.sensitiveFactors?.join(', ') || '없음'}
@@ -468,7 +469,7 @@ async function handleWindAdvice({ lat, lon, locationName, uid }, res) {
 - 일정: ${userInfo.schedule || '없음'}
 ` : '';
 
-  const prompt = `
+    const prompt = `
 ${userText}
 현재 "${locationName}"의 바람 정보는 다음과 같습니다:
 - 풍속: ${speed} m/s
@@ -506,9 +507,9 @@ async function handleCloudAdvice({ lat, lon, locationName, uid }, res) {
 
     const cloud = weather.cloud;
 
-  // 사용자 정보 포맷 구성 (일정 추가됨)
-  const userInfo = await getUserProfile(uid);
-  const userText = userInfo ? `
+    // 사용자 정보 포맷 구성 (일정 추가됨)
+    const userInfo = await getUserProfile(uid);
+    const userText = userInfo ? `
 사용자 정보:
 - 이름: ${userInfo.name}
 - 민감 요소: ${userInfo.sensitiveFactors?.join(', ') || '없음'}
@@ -516,7 +517,7 @@ async function handleCloudAdvice({ lat, lon, locationName, uid }, res) {
 - 일정: ${userInfo.schedule || '없음'}
 ` : '';
 
-  const prompt = `
+    const prompt = `
 ${userText}
 현재 "${locationName}"의 구름량은 약 ${cloud}%입니다.
 
@@ -568,9 +569,9 @@ async function handleDewPointAdvice({ lat, lon, locationName, uid }, res) {
       feeling = '매우 습하고 끈적일 수 있어요. 땀 배출이 어려우니 주의가 필요해요.';
     }
 
-  // 사용자 정보 포맷 구성 (일정 추가됨)
-  const userInfo = await getUserProfile(uid);
-  const userText = userInfo ? `
+    // 사용자 정보 포맷 구성 (일정 추가됨)
+    const userInfo = await getUserProfile(uid);
+    const userText = userInfo ? `
 사용자 정보:
 - 이름: ${userInfo.name}
 - 민감 요소: ${userInfo.sensitiveFactors?.join(', ') || '없음'}
@@ -578,7 +579,7 @@ async function handleDewPointAdvice({ lat, lon, locationName, uid }, res) {
 - 일정: ${userInfo.schedule || '없음'}
 ` : '';
 
-  const prompt = `
+    const prompt = `
 ${userText}
 현재 "${locationName}"의 이슬점은 ${dew.toFixed(1)}℃입니다.
 

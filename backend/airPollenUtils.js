@@ -2,7 +2,7 @@
 
 const axios = require('axios');
 const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
-const AMBEE_POLLEN_API_KEY = process.env.AMBEE_POLLEN_API_KEY;
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
 // ✅ 미세먼지 정보 가져오기
 async function getAirQuality(lat, lon) {
@@ -28,67 +28,86 @@ async function getAirQuality(lat, lon) {
   }
 }
 
-// Ambee Pollen API 호출 함수 (응답 구조에 맞춰 수정됨)
-async function getPollenAmbee(lat, lon) {
+// Google Pollen API 호출 함수
+async function getPollenGoogle(lat, lon) {
   try {
-    const url = 'https://api.ambeedata.com/latest/pollen/by-lat-lng';
+    const url = 'https://pollen.googleapis.com/v1/forecast:lookup';
 
     const res = await axios.get(url, {
-      params: { lat, lng: lon },
-      headers: {
-        'x-api-key': AMBEE_POLLEN_API_KEY,
-        'Accept': 'application/json'
+      params: {
+        key: GOOGLE_MAPS_API_KEY,
+        'location.latitude': lat,
+        'location.longitude': lon,
+        days: 1,  // 오늘 데이터만 요청
+        languageCode: 'ko'  // 한국어 응답
       }
     });
 
-    // 응답 전체를 콘솔에 찍어서 실제 구조를 재확인
-    console.log('🌲 Ambee 응답 JSON:', JSON.stringify(res.data, null, 2));
+    // 응답 전체를 콘솔에 찍어서 실제 구조를 확인
+    console.log('🌲 Google Pollen API 응답:', JSON.stringify(res.data, null, 2));
 
-    // Ambee 응답 내부의 data 배열
-    const arr = res.data?.data;
-    if (!Array.isArray(arr) || arr.length === 0) {
-      console.warn('🌲 Ambee 응답에 data 배열이 없거나 비어 있습니다.');
+    const dailyInfo = res.data?.dailyInfo;
+    if (!Array.isArray(dailyInfo) || dailyInfo.length === 0) {
+      console.warn('🌲 Google Pollen API 응답에 dailyInfo가 없거나 비어 있습니다.');
       return null;
     }
 
-    // 첫 번째(유일한) 객체를 꺼냄
-    const info      = arr[0];
-    const risks     = info.Risk;    // { grass_pollen: "Low", tree_pollen: "Low", weed_pollen: "Low" }
-    const counts    = info.Count;   // { grass_pollen: 27, tree_pollen: 47, weed_pollen: 13 }
-    const updatedAt = info.updatedAt; // "2025-06-04T11:00:00.000Z"
+    // 첫 번째 날(오늘)의 정보
+    const today = dailyInfo[0];
+    const pollenTypes = today.pollenTypeInfo;  // GRASS, TREE, WEED 배열
 
-    if (typeof risks !== 'object' || typeof counts !== 'object') {
-      console.warn('🌲 Ambee 응답 형식이 예상과 다릅니다. Risk 또는 Count 필드가 없습니다.');
+    if (!Array.isArray(pollenTypes) || pollenTypes.length === 0) {
+      console.warn('🌲 꽃가루 타입 정보가 없습니다.');
       return null;
     }
 
-    // 위험도 우선순위 매핑
-    const priorityMap = { 'High': 3, 'Medium': 2, 'Low': 1 };
-
-    // "가장 높은 위험도"를 찾기 위해 기본값 세팅
-    let topType = Object.keys(risks)[0]; // 예: "grass_pollen"
-    for (const type of Object.keys(risks)) {
-      if (priorityMap[risks[type]] > priorityMap[risks[topType]]) {
-        topType = type;
+    // UPI(Universal Pollen Index) 값이 가장 높은 타입 찾기
+    // indexInfo가 있는 경우에만 비교, 없으면 첫 번째 타입 사용
+    let topPollen = pollenTypes[0];
+    for (const pollen of pollenTypes) {
+      const currentValue = pollen.indexInfo?.value ?? 0;
+      const topValue = topPollen.indexInfo?.value ?? 0;
+      if (currentValue > topValue) {
+        topPollen = pollen;
       }
     }
 
-    // 최종 선택된 항목
-    const topRisk  = risks[topType];    // “Low”/“Medium”/“High”
-    const topCount = counts[topType];   // 숫자
-    const topTime  = updatedAt;         // ISO 문자열
+    // Google Pollen API 응답 형식:
+    // - code: "GRASS", "TREE", "WEED"
+    // - displayName: "잔디", "나무", "잡초" (한국어)
+    // - indexInfo.value: 0-5 (UPI) - 선택적, 없을 수 있음
+    // - indexInfo.category: "None", "Very low", "Low", "Moderate", "High", "Very high" - 선택적
+    // - inSeason: boolean - 선택적
 
-    // ex) { type: "grass_pollen", count: 27, risk: "Low", time: "2025-06-04T11:00:00.000Z" }
+    const pollenCode = topPollen.code;  // "GRASS", "TREE", "WEED"
+    const upiValue = topPollen.indexInfo?.value ?? 0;
+    const category = topPollen.indexInfo?.category || 'Very low';  // indexInfo 없으면 기본값
+    const inSeason = topPollen.inSeason ?? true;  // 시즌 정보 없으면 true로 간주
+
+    // ⚠️ indexInfo가 없으면 로그 출력 (디버깅용)
+    if (!topPollen.indexInfo) {
+      console.warn('⚠️ indexInfo가 없습니다. 기본값 사용:', {
+        code: pollenCode,
+        displayName: topPollen.displayName,
+        defaultCategory: category,
+        defaultValue: upiValue
+      });
+    }
+
+    // Google API 원본 코드명 사용 (GRASS, TREE, WEED)
     return {
-      type:  topType,
-      count: topCount,
-      risk:  topRisk,
-      time:  topTime
+      type: pollenCode,            // "GRASS", "TREE", "WEED"
+      value: upiValue,             // 0-5 (UPI 지수), indexInfo 없으면 0
+      category: category,          // "None", "Very low", "Low", "Moderate", "High", "Very high"
+      risk: category,              // 호환성을 위해 category를 risk로도 제공
+      inSeason: inSeason,          // 시즌 여부
+      time: new Date().toISOString()  // 현재 시간
     };
   } catch (err) {
-    console.error('🌲 Ambee Pollen API 호출 오류:', {
+    console.error('🌲 Google Pollen API 호출 오류:', {
       status: err.response?.status,
-      data:   err.response?.data || err.message
+      statusText: err.response?.statusText,
+      data: err.response?.data || err.message
     });
     return null;
   }
@@ -96,5 +115,5 @@ async function getPollenAmbee(lat, lon) {
 
 module.exports = {
   getAirQuality,
-  getPollenAmbee
+  getPollenGoogle
 };

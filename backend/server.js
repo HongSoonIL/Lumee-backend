@@ -13,7 +13,7 @@ const { extractScheduleLocations } = require('./scheduleLocationExtractor');
 console.log('=== API 키 상태 확인 ===');
 console.log('Gemini API 키:', process.env.GEMINI_API_KEY ? '있음' : '없음');
 console.log('OpenWeather API 키:', process.env.OPENWEATHER_API_KEY ? '있음' : '없음');
-console.log('Ambee API 키:', process.env.AMBEE_POLLEN_API_KEY ? '있음' : '없음');
+console.log('Google Maps API 키:', process.env.GOOGLE_MAPS_API_KEY ? '있음' : '없음');
 
 // Module import
 const { getUserProfile } = require('./userProfileUtils');
@@ -220,6 +220,22 @@ app.post('/chat', async (req, res) => {
         responsePayload.dust = {
           value: pm25,
           level: getAirLevel(pm25),
+          date: fullWeather.output.date
+        };
+      }
+    }
+
+    // (3) 꽃가루 데이터
+    if (['꽃가루', '알레르기', 'pollen', 'allergy'].some(k => lowerInput.includes(k))) {
+      if (fullWeather?.output?.pollen) {
+        const pollenData = fullWeather.output.pollen;
+        // Google Pollen API 응답 형식
+        responsePayload.pollen = {
+          type: pollenData.type,           // "grass_pollen", "tree_pollen", "weed_pollen"
+          value: pollenData.value,         // UPI 0-5
+          category: pollenData.category,   // "Very low", "Low", "Moderate", "High", "Very high"
+          level: pollenData.category,      // 프론트엔드 호환성
+          inSeason: pollenData.inSeason,   // 시즌 여부
           date: fullWeather.output.date
         };
       }
