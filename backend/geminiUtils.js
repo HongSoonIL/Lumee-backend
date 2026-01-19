@@ -51,7 +51,17 @@ async function callGeminiForToolSelection(userInput, tools) {
     contents,
     tools: [tools],
     systemInstruction,
+    safetySettings: [
+      { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+    ]
   });
+
+  // 디버깅: 응답 구조 확인
+  console.log('🔍 Gemini 1차 응답:', JSON.stringify(data, null, 2));
+
   return data;
 }
 
@@ -305,6 +315,12 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
   const { data } = await geminiApi.post('/gemini-2.0-flash:generateContent', {
     contents,
     systemInstruction,
+    safetySettings: [
+      { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+    ]
   });
   return data;
 }
