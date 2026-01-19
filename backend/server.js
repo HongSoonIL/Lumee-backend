@@ -164,7 +164,39 @@ app.post('/chat', async (req, res) => {
     );
 
     const reply = finalResponse.candidates?.[0]?.content?.parts?.[0]?.text || '죄송해요, 답변 생성에 실패했어요.';
-    const responsePayload = { reply };
+
+    // 🔥 [안전 장치] JSON 형식이 그대로 노출되는지 확인
+    const containsRawJSON = (text) => {
+      // JSON 객체 패턴 감지 (중괄호와 콜론이 함께 있는 경우)
+      const jsonPattern = /\{[\s\S]*?["'][\s\S]*?:[\s\S]*?["'][\s\S]*?\}/;
+      // get_full_weather 같은 함수명이 포함된 경우
+      const functionPattern = /get_full_weather|get_.*_with_context/;
+      return jsonPattern.test(text) || functionPattern.test(text);
+    };
+
+    // JSON이 감지되면 안전한 대체 메시지 제공
+    let safeReply = reply;
+    if (containsRawJSON(reply)) {
+      console.error('⚠️ 경고: Gemini 응답에 JSON 형식이 감지되어 대체 메시지로 변환합니다.');
+      console.error('원본 응답:', reply.substring(0, 200) + '...');
+
+      // 날씨 데이터에서 기본 정보 추출하여 안전한 메시지 생성
+      const fullWeather = toolOutputs.find(o => o.tool_function_name === 'get_full_weather_with_context');
+      if (fullWeather?.output) {
+        const { location, weather } = fullWeather.output;
+        const temp = weather?.current?.temp ? Math.round(weather.current.temp) : null;
+        const desc = weather?.current?.weather?.[0]?.description || '날씨';
+        const userName = userProfile?.name || '사용자';
+
+        safeReply = temp
+          ? `${userName}님, 현재 ${location || '해당 지역'}의 날씨는 ${desc}이고 기온은 ${temp}도예요. 😊`
+          : `${userName}님, 현재 ${location || '해당 지역'}의 날씨를 확인했어요! 😊`;
+      } else {
+        safeReply = '죄송해요, 날씨 정보를 표시하는 데 문제가 있었어요. 다시 질문해주시겠어요? 😥';
+      }
+    }
+
+    const responsePayload = { reply: safeReply };
 
     // 날씨 데이터 찾기
     const fullWeather = toolOutputs.find(o => o.tool_function_name === 'get_full_weather_with_context');
