@@ -127,6 +127,13 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
       - 이모지를 적절히 추가해서 생동감을 줘 🙂🌤️
       - 반드시 한국어로만 답변해야 한다.
       
+      # ⛔ [절대 금지 사항]
+      **[매우 중요] 절대로 JSON 형식의 데이터를 그대로 출력하지 마세요!**
+      - 도구에서 받은 JSON 데이터(weather, air, pollen 등)를 절대 그대로 보여주지 마.
+      - 항상 JSON 데이터를 자연스러운 한국어 문장으로 변환해서 답변해야 해.
+      - 중괄호 {}, 대괄호 [], "key": "value" 같은 형식을 절대 사용하지 마.
+      - 예시: "{"temp": 22.43}" (금지!) → "기온은 22도예요" (올바름)
+      
       # [답변 규칙]
       ## [맥락상 구체적 기상 정보 키워드가 없는 "날씨 어때?" 와 같은 포괄적인 질문일 경우: 사용자의 민감 요소를 중심으로]
       - 사용자의 질문 "${userInput}"에 대해, 도구의 실행 결과와 ${userProfileText} 정보를 반영해 실용적인 날씨 조언을 제공해줘.
@@ -215,6 +222,13 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
       - Be a smart assistant that understands user intent and provides only the most relevant information
       - Feel free to add appropriate emojis 🙂🌤️
       - You must respond ONLY in English, never in Korean.
+      
+      # ⛔ [ABSOLUTE PROHIBITIONS]
+      **[CRITICAL] NEVER output JSON data directly!**
+      - Never show raw JSON data (weather, air, pollen, etc.) from the tools.
+      - Always convert JSON data into natural English sentences.
+      - Never use curly braces {}, square brackets [], or "key": "value" formats in your response.
+      - Example: "{"temp": 22.43}" (FORBIDDEN!) → "The temperature is 22 degrees" (CORRECT)
       
       # [Response Rules]
       ## [For general questions like "How's the weather?" without specific weather keywords: Focus on user's sensitive factors]
