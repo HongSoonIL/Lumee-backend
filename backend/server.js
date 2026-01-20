@@ -9,9 +9,10 @@ const { google } = require('googleapis');
 const cameraRoutes = require('./cameraRoutes');
 const { extractScheduleLocations } = require('./scheduleLocationExtractor');
 
-// 서버 시작 시 API 키 확인 (테스트)
-console.log('=== API 키 상태 확인 ===');
-console.log('Gemini API 키:', process.env.GEMINI_API_KEY ? '있음' : '없음');
+// 서버 시작 시 API 키 및 Ollama 설정 확인
+console.log('=== API 키 및 Ollama 설정 확인 ===');
+console.log('Ollama URL:', process.env.OLLAMA_BASE_URL || 'http://localhost:11434');
+console.log('Ollama Model:', process.env.OLLAMA_MODEL || 'llama3.1:8b');
 console.log('OpenWeather API 키:', process.env.OPENWEATHER_API_KEY ? '있음' : '없음');
 console.log('Google Maps API 키:', process.env.GOOGLE_MAPS_API_KEY ? '있음' : '없음');
 
@@ -20,7 +21,7 @@ const { getUserProfile } = require('./userProfileUtils');
 const { geocodeGoogle, reverseGeocode } = require('./locationUtils');
 const { getWeatherByCoords } = require('./weatherUtils'); // 홈 화면 날씨 표시에 사용
 const conversationStore = require('./conversationStore');
-const { callGeminiForToolSelection, callGeminiForFinalResponse } = require('./geminiUtils');
+const { callOllamaForToolSelection, callOllamaForFinalResponse } = require('./ollamaUtils');
 const { availableTools, executeTool } = require('./tools');
 
 // 프론트엔드와 연결을 위한 상수
@@ -137,7 +138,7 @@ app.post('/chat', async (req, res) => {
     }
 
     // 2. 도구 선택
-    const toolSelectionResponse = await callGeminiForToolSelection(userInput, availableTools);
+    const toolSelectionResponse = await callOllamaForToolSelection(userInput, availableTools);
     let functionCalls = toolSelectionResponse.candidates?.[0]?.content?.parts
       .filter(p => p.functionCall)
       .map(p => p.functionCall);
@@ -155,7 +156,7 @@ app.post('/chat', async (req, res) => {
     const toolOutputs = results.filter(r => r.status === 'fulfilled').map(r => r.value);
 
     // 4. 최종 Gemini 응답
-    const finalResponse = await callGeminiForFinalResponse(
+    const finalResponse = await callOllamaForFinalResponse(
       userInput,
       toolSelectionResponse,
       toolOutputs,

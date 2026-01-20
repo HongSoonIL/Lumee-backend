@@ -1,5 +1,5 @@
 // scheduleLocationExtractor.js
-const { model } = require('./geminiUtils');
+const { callOllamaForSimpleTask } = require('./ollamaUtils');
 
 /**
  * 구글 캘린더 이벤트 목록에서 날씨 예보에 필요한 행정구역 단위의 위치 정보를 추출합니다.
@@ -46,19 +46,18 @@ async function extractScheduleLocations(events) {
       ${eventListString}
     `;
 
-    // 3. Gemini 모델 호출
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
+    // 3. Ollama 모델 호출
+    const responseText = await callOllamaForSimpleTask(prompt);
 
     // 4. JSON 파싱 및 데이터 정제
-    // Gemini가 가끔 마크다운 코드 블록(```json ... ```)을 포함할 수 있으므로 이를 제거
+    // Ollama가 가끔 마크다운 코드 블록(```json ... ```)을 포함할 수 있으므로 이를 제거
     const cleanedText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
 
     let extractedLocations = [];
     try {
       extractedLocations = JSON.parse(cleanedText);
     } catch (parseError) {
-      console.error("Gemini Response Parsing Error:", parseError);
+      console.error("Ollama Response Parsing Error:", parseError);
       console.log("Raw Response:", responseText);
       // 파싱 실패 시 원본 이벤트 반환 (위치 정보 없이)
       return events;

@@ -4,9 +4,11 @@ const router = express.Router();
 const axios = require('axios');
 const sharp = require('sharp');
 
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const { getWeatherByCoords } = require('./weatherUtils');
+
+// Ollama 설정
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+const OLLAMA_VISION_MODEL = process.env.OLLAMA_VISION_MODEL || 'llava'; // 멀티모달 모델
 
 // ========== 촬영 및 분석 API ==========
 // 웹 브라우저에서 촬영한 이미지를 받아 분석합니다
@@ -49,8 +51,8 @@ router.post('/capture', async (req, res) => {
     const optimizedBase64 = optimizedImage.toString('base64');
     console.log(`🔄 이미지 최적화 완료 (크기: ${optimizedBase64.length} bytes)`);
 
-    // 4. Gemini Vision API로 분석
-    console.log('🤖 Gemini 분석 시작...');
+    // 4. Ollama Vision API로 분석
+    console.log('🤖 Ollama 분석 시작...');
     const analysisResult = await analyzeClothing(optimizedBase64, weatherData, language);
     console.log('✅ 분석 완료:', analysisResult);
 
@@ -125,8 +127,8 @@ router.post('/analyze', async (req, res) => {
     const optimizedBase64 = optimizedImage.toString('base64');
     console.log(`🔄 이미지 최적화 완료 (크기: ${optimizedBase64.length} bytes)`);
 
-    // 4. Gemini Vision API로 분석
-    console.log('🤖 Gemini 분석 시작...');
+    // 4. Ollama Vision API로 분석
+    console.log('🤖 Ollama 분석 시작...');
     const analysisResult = await analyzeClothing(optimizedBase64, weatherData, language);
     console.log('✅ 분석 완료:', analysisResult);
 
@@ -159,10 +161,9 @@ router.post('/analyze', async (req, res) => {
   }
 });
 
-// ========== Gemini Vision 분석 함수 ==========
+// ========== Ollama Vision 분석 함수 ==========
 async function analyzeClothing(base64Image, weatherData, language = 'en') {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
     // 날씨 정보를 언어에 맞게 포맷
     let weatherInfo, prompt;
@@ -228,33 +229,33 @@ Example:
   "colors": ["white", "blue"],
   "style": "casual",
   "warmth_level": 2,
-  "weather_recommendation": "Perfect outfit for 23°C!"
+      "weather_recommendation": "Perfect outfit for 23°C!"
 }
 `;
     }
 
-    const result = await model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          mimeType: "image/jpeg",
-          data: base64Image
-        }
+    // Ollama Vision API 호출 (llava 모델 사용)
+    const response = await axios.post(`${OLLAMA_BASE_URL}/api/generate`, {
+      model: OLLAMA_VISION_MODEL,
+      prompt: prompt,
+      images: [base64Image],  // Ollama는 base64 이미지 배열을 받음
+      stream: false,
+      options: {
+        temperature: 0.3,  // 일관된 JSON 응답을 위한 낮은 temperature
       }
-    ]);
+    });
 
-    const response = await result.response;
-    let text = response.text();
+    let text = response.data.response;
 
     // JSON 정리 (```json 제거)
-    text = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    text = text.replace(/```json\\s*/g, '').replace(/```\\s*/g, '').trim();
 
     // JSON 파싱
     const parsed = JSON.parse(text);
     return parsed;
 
   } catch (error) {
-    console.error('❌ Gemini 분석 오류:', error);
+    console.error('❌ Ollama 분석 오류:', error);
 
     // 언어별 오류 메시지
     const errorMessage = language === 'ko'
