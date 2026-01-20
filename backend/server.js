@@ -86,6 +86,7 @@ app.post('/calendar/events', async (req, res) => {
     });
 
     const events = response.data.items.map(event => ({
+      id: event.id,
       summary: event.summary,
       location: event.location || 'Unknown Location', // 위치 정보
       start: event.start.dateTime || event.start.date,
@@ -111,6 +112,75 @@ app.post('/calendar/events', async (req, res) => {
   } catch (error) {
     console.error('Calendar API Error:', error);
     res.status(500).json({ error: 'Failed to fetch calendar events' });
+  }
+});
+
+// ✅ 구글 캘린더 일정 추가 API (새로 추가할 부분)
+app.post('/calendar/events/create', async (req, res) => {
+  const { accessToken, summary, location, description, startDateTime, endDateTime } = req.body;
+
+  if (!accessToken) {
+    return res.status(400).json({ error: 'Access Token is required' });
+  }
+
+  try {
+    const oauth2Client = new google.auth.OAuth2();
+    oauth2Client.setCredentials({ access_token: accessToken });
+
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // 구글 API 형식에 맞게 데이터 구성
+    const event = {
+      summary: summary, // 일정 제목
+      location: location || '', // 장소
+      description: description || 'Lumee 앱에서 생성됨', // 설명
+      start: {
+        dateTime: startDateTime, // 예: "2026-01-21T15:00:00+09:00"
+        timeZone: 'Asia/Seoul',
+      },
+      end: {
+        dateTime: endDateTime,
+        timeZone: 'Asia/Seoul',
+      },
+    };
+
+    const response = await calendar.events.insert({
+      calendarId: 'primary',
+      resource: event,
+    });
+
+    console.log('✅ 일정 생성 성공:', response.data.summary);
+    res.json({ success: true, event: response.data });
+
+  } catch (error) {
+    console.error('Calendar Create Error:', error);
+    res.status(500).json({ error: 'Failed to create calendar event' });
+  }
+});
+
+// ✅ 구글 캘린더 일정 삭제 API
+app.post('/calendar/events/delete', async (req, res) => {
+  const { accessToken, eventId } = req.body;
+
+  if (!accessToken || !eventId) {
+    return res.status(400).json({ error: 'Access Token and Event ID are required' });
+  }
+
+  try {
+    const oauth2Client = new google.auth.OAuth2();
+    oauth2Client.setCredentials({ access_token: accessToken });
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    await calendar.events.delete({
+      calendarId: 'primary',
+      eventId: eventId,
+    });
+
+    console.log('✅ 일정 삭제 성공:', eventId);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Calendar Delete Error:', error);
+    res.status(500).json({ error: 'Failed to delete calendar event' });
   }
 });
 
