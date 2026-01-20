@@ -184,6 +184,62 @@ app.post('/calendar/events/delete', async (req, res) => {
   }
 });
 
+// 일정 수정
+app.post('/calendar/events/update', async (req, res) => {
+  const { accessToken, eventId, summary, location, description, startDateTime, endDateTime } = req.body;
+
+  if (!accessToken || !eventId) {
+    return res.status(400).json({ error: 'Access Token and Event ID are required' });
+  }
+
+  try {
+    const oauth2Client = new google.auth.OAuth2();
+    oauth2Client.setCredentials({ access_token: accessToken });
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // ✅ patch에 넣을 body (googleapis는 resource 키로 받음)
+    const resource = {};
+
+    if (summary !== undefined) resource.summary = summary;
+    if (location !== undefined) resource.location = location || '';
+    if (description !== undefined) resource.description = description || '';
+
+    // ✅ 시간 보정: start >= end면 end를 +1일로 보정 (오후→오전 케이스)
+    const safeStart = startDateTime ? new Date(startDateTime) : null;
+    let safeEnd = endDateTime ? new Date(endDateTime) : null;
+
+    if (safeStart && safeEnd && safeEnd.getTime() <= safeStart.getTime()) {
+      // end를 다음날로 +1일
+      safeEnd = new Date(safeEnd.getTime() + 24 * 60 * 60 * 1000);
+    }
+
+    if (safeStart) {
+      resource.start = { dateTime: safeStart.toISOString(), timeZone: 'Asia/Seoul' };
+    }
+    if (safeEnd) {
+      resource.end = { dateTime: safeEnd.toISOString(), timeZone: 'Asia/Seoul' };
+    }
+
+    console.log('🛠 PATCH eventId:', eventId);
+    console.log('🛠 PATCH resource:', JSON.stringify(resource, null, 2));
+
+    const patched = await calendar.events.patch({
+      calendarId: 'primary',
+      eventId,
+      resource,
+    });
+
+    return res.json({ success: true, event: patched.data });
+  } catch (error) {
+    console.error('❌ Calendar Update Error:', error?.response?.data || error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to update calendar event',
+      detail: error?.response?.data || String(error),
+    });
+  }
+});
+
 // ✨ LLM 중심 채팅 엔드포인트 ✨
 app.post('/chat', async (req, res) => {
   const { userInput, coords, uid, schedule } = req.body;
