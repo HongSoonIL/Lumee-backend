@@ -2,6 +2,17 @@
 const { model } = require('./geminiUtils');
 
 /**
+ * 날짜 객체를 로컬 시간대 기준 YYYY-MM-DD 문자열로 변환
+ * (toISOString()은 UTC로 변환하므로 타임존 문제 발생)
+ */
+function toLocalDateString(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
  * 구글 캘린더 이벤트 목록에서 날씨 예보에 필요한 행정구역 단위의 위치 정보를 추출합니다.
  * Gemini AI를 사용하여 비정형 장소 데이터(예: "스타벅스 강남점")를 표준 지역명(예: "강남구")으로 변환합니다.
  * * @param {Array} events - 구글 캘린더 이벤트 객체 배열 
@@ -105,8 +116,8 @@ function getLocationFromSchedule(userProfile, requestedDate) {
     return null;
   }
 
-  // 2. 날짜를 YYYY-MM-DD 형식으로 변환
-  const targetDateStr = requestedDate.toISOString().split('T')[0]; // YYYY-MM-DD
+  // 2. 날짜를 YYYY-MM-DD 형식으로 변환 (로컬 시간대 기준)
+  const targetDateStr = toLocalDateString(requestedDate);
   console.log(`🔍 일정 검색 날짜: ${targetDateStr}`);
 
   // 3. 일정에서 해당 날짜 찾기
@@ -144,7 +155,77 @@ function getLocationFromSchedule(userProfile, requestedDate) {
   }
 }
 
+/**
+ * 사용자의 일정에서 특정 날짜에 해당하는 모든 위치 정보를 추출합니다.
+ * @param {Object} userProfile - 사용자 프로필 객체 (schedule 필드 포함)
+ * @param {Date} requestedDate - 조회할 날짜
+ * @returns {Array} - 추출된 일정 배열 [{summary, location, weatherLocation, start}, ...]
+ */
+function getAllLocationsFromSchedule(userProfile, requestedDate) {
+  // 1. 유효성 검사
+  if (!userProfile || !userProfile.schedule || !Array.isArray(userProfile.schedule)) {
+    console.log('⚠️ 유효한 일정 데이터가 없습니다.');
+    return [];
+  }
+
+  if (!requestedDate || isNaN(requestedDate.getTime())) {
+    console.log('⚠️ 유효하지 않은 날짜입니다.');
+    return [];
+  }
+
+  // 2. 날짜를 YYYY-MM-DD 형식으로 변환 (로컬 시간대 기준)
+  const targetDateStr = toLocalDateString(requestedDate);
+  console.log(`🔍 일정 검색 날짜: ${targetDateStr}`);
+
+  // 3. 일정에서 해당 날짜의 모든 일정 찾기
+  const matchingSchedules = userProfile.schedule.filter(schedule => {
+    if (!schedule.date && !schedule.start) return false;
+
+    // schedule.date 또는 schedule.start 사용
+    const dateStr = schedule.date || schedule.start;
+
+    // 다양한 형식 파싱
+    let scheduleDate;
+    if (dateStr.includes('T')) {
+      // ISO 형식 (2026-01-16T18:30:00+09:00)
+      scheduleDate = dateStr.split('T')[0];
+    } else {
+      // 이미 YYYY-MM-DD 형식
+      scheduleDate = dateStr;
+    }
+
+    return scheduleDate === targetDateStr;
+  });
+
+  // 4. 위치 정보가 있는 일정만 필터링
+  const schedulesWithLocation = matchingSchedules
+    .map(schedule => {
+      const location = schedule.weatherLocation || schedule.location;
+      if (!location) return null;
+
+      return {
+        summary: schedule.summary || schedule.title || '일정',
+        location: schedule.location,
+        weatherLocation: location,
+        start: schedule.start || schedule.date
+      };
+    })
+    .filter(schedule => schedule !== null);
+
+  if (schedulesWithLocation.length > 0) {
+    console.log(`✅ ${targetDateStr}에 위치가 포함된 일정 ${schedulesWithLocation.length}개 발견:`);
+    schedulesWithLocation.forEach((schedule, index) => {
+      console.log(`  [${index + 1}] "${schedule.summary}" - 위치: ${schedule.weatherLocation}`);
+    });
+  } else {
+    console.log(`📅 ${targetDateStr}에 위치가 포함된 일정이 없습니다.`);
+  }
+
+  return schedulesWithLocation;
+}
+
 module.exports = {
   extractScheduleLocations,
-  getLocationFromSchedule
+  getLocationFromSchedule,
+  getAllLocationsFromSchedule
 };

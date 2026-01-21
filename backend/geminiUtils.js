@@ -69,10 +69,51 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
   // 🔥 언어 감지
   const language = detectLanguage(userInput);
 
-  // 🔥 위치 정보 추출
+  // 🔥 위치 정보 및 여러 일정 처리
   let locationText = '';
+  let scheduleDetailsText = '';
   const weatherTool = toolOutputs.find(output => output.tool_function_name === 'get_full_weather_with_context');
-  if (weatherTool?.output?.location) {
+
+  // 🔥 여러 일정이 있는 경우
+  if (weatherTool?.output?.multipleLocations && weatherTool?.output?.schedules) {
+    const schedules = weatherTool.output.schedules;
+
+    if (language === 'ko') {
+      scheduleDetailsText = `\n\n[오늘의 일정별 날씨 정보]\n`;
+      schedules.forEach((schedule, index) => {
+        const time = new Date(schedule.scheduleStart).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+        const temp = schedule.weather?.current?.temp ? Math.round(schedule.weather.current.temp) : '정보 없음';
+        const desc = schedule.weather?.current?.weather?.[0]?.description || '날씨 정보 없음';
+        const pm25 = schedule.air?.pm25;
+        const airLevel = pm25 !== undefined ?
+          (pm25 <= 15 ? '좋음' : pm25 <= 35 ? '보통' : pm25 <= 75 ? '나쁨' : '매우 나쁨') :
+          '정보 없음';
+
+        scheduleDetailsText += `${index + 1}. "${schedule.scheduleSummary}" (${time})\n`;
+        scheduleDetailsText += `   - 위치: ${schedule.location}\n`;
+        scheduleDetailsText += `   - 날씨: ${desc}, 기온 ${temp}°C\n`;
+        scheduleDetailsText += `   - 공기질: ${airLevel}\n`;
+      });
+    } else {
+      scheduleDetailsText = `\n\n[Weather Information for Today's Schedules]\n`;
+      schedules.forEach((schedule, index) => {
+        const time = new Date(schedule.scheduleStart).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        const temp = schedule.weather?.current?.temp ? Math.round(schedule.weather.current.temp) : 'N/A';
+        const desc = schedule.weather?.current?.weather?.[0]?.description || 'No weather data';
+        const pm25 = schedule.air?.pm25;
+        const airLevel = pm25 !== undefined ?
+          (pm25 <= 15 ? 'Good' : pm25 <= 35 ? 'Moderate' : pm25 <= 75 ? 'Poor' : 'Very Poor') :
+          'N/A';
+
+        scheduleDetailsText += `${index + 1}. "${schedule.scheduleSummary}" (${time})\n`;
+        scheduleDetailsText += `   - Location: ${schedule.location}\n`;
+        scheduleDetailsText += `   - Weather: ${desc}, ${temp}°C\n`;
+        scheduleDetailsText += `   - Air Quality: ${airLevel}\n`;
+      });
+    }
+  }
+  // 🔥 단일 위치인 경우 (기존 로직)
+  else if (weatherTool?.output?.location) {
     const location = weatherTool.output.location;
     locationText = language === 'ko' ?
       `\n[현재 위치]\n- 지역: ${location}` :
@@ -92,8 +133,8 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
     const schedule = userProfile.schedule || (language === 'ko' ? '일정 없음' : 'No schedule');
 
     userProfileText = language === 'ko' ?
-      `\n[사용자 정보]\n- 이름: ${name}\n- 취미: ${hobbies}\n- 민감 요소: ${sensitivities}\n- 요청 날짜: ${requestDate}\n- 일정: ${schedule}${locationText}` :
-      `\n[User Information]\n- Name: ${name}\n- Hobbies: ${hobbies}\n- Sensitive factors: ${sensitivities}\n- Request date: ${requestDate}\n- Schedule: ${schedule}${locationText}`;
+      `\n[사용자 정보]\n- 이름: ${name}\n- 취미: ${hobbies}\n- 민감 요소: ${sensitivities}\n- 요청 날짜: ${requestDate}\n- 일정: ${schedule}${locationText}${scheduleDetailsText}` :
+      `\n[User Information]\n- Name: ${name}\n- Hobbies: ${hobbies}\n- Sensitive factors: ${sensitivities}\n- Request date: ${requestDate}\n- Schedule: ${schedule}${locationText}${scheduleDetailsText}`;
   }
 
   const modelResponse = toolSelectionResponse.candidates?.[0]?.content;
@@ -148,18 +189,22 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
       ## [맥락상 구체적 기상 정보 키워드가 없는 "날씨 어때?" 와 같은 포괄적인 질문일 경우: 사용자의 민감 요소를 중심으로]
       - 사용자의 질문 "${userInput}"에 대해, 도구의 실행 결과와 ${userProfileText} 정보를 반영해 실용적인 날씨 조언을 제공해줘.
       1.  **답변 시작 시 반드시 현재 위치를 언급해줘.** 예: "민서님, 현재 서울 날씨는..." 또는 "지금 강남구 날씨 상황은..."
-      2.  **[중요] 사용자의 '일정(Schedule)' 정보를 확인할 때:**
+      2.  **[중요] 여러 일정이 있는 경우:**
+          - **[오늘의 일정별 날씨 정보] 섹션이 제공된 경우, 각 일정의 위치별 날씨를 모두 언급해줘.**
+          - 각 일정의 시간대와 위치를 고려하여 맞춤형 조언을 제공해줘.
+          - 예: "민서님, 오전 9시 서울 회의는 쌀쌀할 예정이니 겉옷을 챙기시고, 오후 2시 부산 출장은 비가 올 수 있으니 우산을 준비하세요!"
+          - 일정별로 날씨가 크게 다르다면 각각에 대한 준비 사항을 알려줘.
+      3.  **[중요] 사용자의 '일정(Schedule)' 정보를 확인할 때:**
           - 반드시 '요청 날짜'와 일정에 명시된 날짜를 정확히 비교해줘.
           - **일정 날짜와 요청 날짜가 다르면 (1일 이상 차이나면) 그 일정은 절대 언급하지 마.**
           - **요청 날짜와 일치하는 일정이 없는 경우, 일정에 대해서는 아무것도 언급하지 마.**
           - 일정 날짜와 요청 날짜가 같은 날이면 "오늘 [일정명] 일정이 있으시네요!"라고 언급해줘.
           - 일정 날짜가 요청 날짜의 다음날이면 "내일 [일정명] 일정이 있으시네요!"라고 언급해줘.
-          - 예시: 요청 날짜가 2025-12-11이고 일정이 "2025-12-19: 설악산 등산"이라면, 날짜가 8일이나 차이나므로 이 일정은 절대 언급하지 마.
-      3.  사용자의 '날씨 민감 요소'와 '취미' 정보를 확인해.
-      4.  두 정보를 종합하여, **"이 사용자에게 지금 가장 중요하고 유용할 것 같은 정보"를 아주 세세하게 스스로 골라내.**
-      5.  예를 들어, 사용자가 '햇빛'에 민감하고 '꽃가루'에 민감하다면, 다른 정보보다 자외선 정보와 꽃가루 정보를 반드시 포함시켜 경고해줘.
-      6.  사용자가 '조깅'을 좋아하는데 미세먼지 수치가 높거나 비 올 확률이 높다면, "오늘은 조깅 대신 실내 운동 어떠세요?" 라고 제안해줘.
-      7.  단순히 정보를 나열하지 말고, 위 판단을 바탕으로 자연스러운 문장으로 요약해서 이야기해줘.
+      4.  사용자의 '날씨 민감 요소'와 '취미' 정보를 확인해.
+      5.  두 정보를 종합하여, **"이 사용자에게 지금 가장 중요하고 유용할 것 같은 정보"를 아주 세세하게 스스로 골라내.**
+      6.  예를 들어, 사용자가 '햇빛'에 민감하고 '꽃가루'에 민감하다면, 다른 정보보다 자외선 정보와 꽃가루 정보를 반드시 포함시켜 경고해줘.
+      7.  사용자가 '조깅'을 좋아하는데 미세먼지 수치가 높거나 비 올 확률이 높다면, "오늘은 조깅 대신 실내 운동 어떠세요?" 라고 제안해줘.
+      8.  단순히 정보를 나열하지 말고, 위 판단을 바탕으로 자연스러운 문장으로 요약해서 이야기해줘.
       
       ## [맥락상 구체적 기상 정보 키워드가 존재할 경우: 핵심 정보 + 개인화 조언]
       - 사용자의 질문 "${userInput}"에 대해, 도구의 실행 결과와 ${userProfileText} 정보를 모두 활용해 실용적인 날씨 조언을 제공해줘.
