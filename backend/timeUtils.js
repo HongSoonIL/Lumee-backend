@@ -74,6 +74,20 @@ function extractDateFromText(text) {
     return new Date(now.getFullYear(), month - 1, day);
   }
 
+  // 🔥 DD일 (예: "23일" -> 현재 월의 23일)
+  const dayOnlyMatch = lower.match(/^.*?(\d{1,2})일/);
+  if (dayOnlyMatch) {
+    const day = parseInt(dayOnlyMatch[1]);
+    const result = new Date(now.getFullYear(), now.getMonth(), day);
+
+    // 만약 파싱된 날짜가 과거라면 다음 달로 간주
+    if (result < now) {
+      result.setMonth(result.getMonth() + 1);
+    }
+
+    return result;
+  }
+
   return now; // fallback
 }
 
