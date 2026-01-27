@@ -1,6 +1,6 @@
 const { geocodeGoogle, reverseGeocode } = require('./locationUtils');
 const { getWeather } = require('./weatherUtils');
-const { getAirQuality, getPollenAmbee } = require('./airPollenUtils');
+const { getAirQuality, getPollenGoogle } = require('./airPollenUtils');
 const { extractLocationFromText } = require('./placeExtractor');
 const axios = require('axios');
 const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
@@ -54,140 +54,144 @@ const availableTools = {
 };
 
 async function executeTool(functionCall, userCoords, userProfile) {
-    console.log('\n🔧 executeTool 시작');
-    const { name, args } = functionCall;
-    
-    if (name !== 'get_full_weather_with_context') throw new Error('정의되지 않은 도구입니다.');
+  console.log('\n🔧 executeTool 시작');
+  const { name, args } = functionCall;
 
-    const userInput = args.user_input?.toLowerCase() || '';
-    console.log(`👤 사용자 입력: "${userInput}"`);
+  if (name !== 'get_full_weather_with_context') throw new Error('정의되지 않은 도구입니다.');
 
-    // 1. 날짜 추출
-    let requestedDate;
-    
-    if (args.date) {
-      const tempDate = new Date(args.date);
-      if (!isNaN(tempDate.getTime())) {
-        requestedDate = tempDate;
-      } else {
-        console.log(`⚠️ args.date(${args.date}) 파싱 실패 -> extractDateFromText 시도`);
-        requestedDate = extractDateFromText(args.date);
-      }
-    }
+  const userInput = args.user_input?.toLowerCase() || '';
+  console.log(`👤 사용자 입력: "${userInput}"`);
 
-    if (!requestedDate || isNaN(requestedDate.getTime())) {
-      requestedDate = extractDateFromText(userInput);
-    }
+  // 1. 날짜 추출
+  let requestedDate;
 
-    if (!requestedDate || isNaN(requestedDate.getTime())) {
-      console.warn('⚠️ 날짜 파싱 실패하여 오늘 날짜로 대체합니다.');
-      requestedDate = new Date();
-    }
-
-    const dateKey = getYYYYMMDD(requestedDate);
-    console.log(`📅 요청 날짜: ${dateKey} (원본: ${args.date || '없음'})`);
-
-    // 2. 🔥 일정에서 지역 추출 시도 (userProfile이 전달되었는지 확인)
-    let scheduleLocation = null;
-    let targetLocation = args.location || 'CURRENT_LOCATION';
-
-    if (userProfile && userProfile.schedule && (args.location.toUpperCase() === 'CURRENT_LOCATION' || args.location === '현재 위치')) {
-      console.log('\n🗓️ 일정에서 지역 추출 시도...');
-      
-      try {
-        // 🔥 일정 및 위치 추출 (날짜 매칭 포함)
-        const location = require('./scheduleLocationExtractor').getLocationFromSchedule(userProfile, requestedDate);
-
-        if (location) {
-          console.log(`✅ 일정 기반 지역 발견: "${location}"`);
-          console.log(`📍 일정 지역으로 변경: ${targetLocation} -> ${location}`);
-          targetLocation = location; 
-          scheduleLocation = location;
-        } else {
-          console.log('❌ 해당 날짜의 일정에서 지역 정보를 찾지 못했습니다.');
-        }
-      } catch (error) {
-        console.error('❌ 일정 추출 중 오류:', error.message);
-      }
+  if (args.date) {
+    const tempDate = new Date(args.date);
+    if (!isNaN(tempDate.getTime())) {
+      requestedDate = tempDate;
     } else {
-      if (!userProfile) console.log('⚠️ userProfile이 전달되지 않아 일정 확인을 건너뜁니다.');
-      else if (!userProfile.schedule) console.log('⚠️ 일정이 없어 확인을 건너뜁니다.');
+      console.log(`⚠️ args.date(${args.date}) 파싱 실패 -> extractDateFromText 시도`);
+      requestedDate = extractDateFromText(args.date);
     }
+  }
 
-    // 3. 좌표 검색 및 날씨 조회
-    let lat, lon, locationName;
-    console.log(`\n🌍 최종 타겟 지역: "${targetLocation}"`);
+  if (!requestedDate || isNaN(requestedDate.getTime())) {
+    requestedDate = extractDateFromText(userInput);
+  }
 
-    if (targetLocation.toUpperCase() === 'CURRENT_LOCATION' || targetLocation === '현재 위치') {
-      if (!userCoords) throw new Error('현재 위치가 제공되지 않았습니다.');
-      lat = userCoords.latitude;
-      lon = userCoords.longitude;
-      
-      try {
-        locationName = await reverseGeocode(lat, lon);
-        console.log('📍 현재 위치 사용:', locationName);
-      } catch (error) {
-        locationName = '현재 위치';
-      }
-    } else {
-      console.log(`🔍 지역 검색 시도: ${targetLocation}`);
-      const geo = await geocodeGoogle(targetLocation);
-      
-      if (!geo) {
-        console.warn(`⚠️ '${targetLocation}' 검색 실패. 현재 위치로 대체.`);
-        if (userCoords) {
-          lat = userCoords.latitude;
-          lon = userCoords.longitude;
-          locationName = await reverseGeocode(lat, lon);
-        } else {
-          throw new Error(`'${targetLocation}'의 좌표를 찾을 수 없습니다.`);
-        }
+  if (!requestedDate || isNaN(requestedDate.getTime())) {
+    console.warn('⚠️ 날짜 파싱 실패하여 오늘 날짜로 대체합니다.');
+    requestedDate = new Date();
+  }
+
+  const dateKey = getYYYYMMDD(requestedDate);
+  console.log(`📅 요청 날짜: ${dateKey} (원본: ${args.date || '없음'})`);
+
+  // 2. 🔥 일정에서 지역 추출 시도 (userProfile이 전달되었는지 확인)
+  let scheduleLocations = []; // 여러 일정의 위치를 저장
+  let targetLocation = args.location || 'CURRENT_LOCATION';
+
+  if (userProfile && userProfile.schedule && (args.location.toUpperCase() === 'CURRENT_LOCATION' || args.location === '현재 위치')) {
+    console.log('\n🗓️ 일정에서 지역 추출 시도...');
+
+    try {
+      // 🔥 모든 일정 및 위치 추출 (날짜 매칭 포함)
+      const allSchedules = require('./scheduleLocationExtractor').getAllLocationsFromSchedule(userProfile, requestedDate);
+
+      if (allSchedules && allSchedules.length > 0) {
+        console.log(`✅ 일정 기반 지역 ${allSchedules.length}개 발견`);
+        scheduleLocations = allSchedules;
+
+        // 첫 번째 일정의 위치를 기본 위치로 설정 (하위 호환성)
+        targetLocation = allSchedules[0].weatherLocation;
+        console.log(`📍 기본 위치로 설정: ${targetLocation}`);
       } else {
-        lat = geo.lat;
-        lon = geo.lon;
-        locationName = targetLocation;
-        console.log(`✅ 좌표 검색 성공: ${locationName} (${lat}, ${lon})`);
+        console.log('❌ 해당 날짜의 일정에서 지역 정보를 찾지 못했습니다.');
       }
+    } catch (error) {
+      console.error('❌ 일정 추출 중 오류:', error.message);
+    }
+  } else {
+    if (!userProfile) console.log('⚠️ userProfile이 전달되지 않아 일정 확인을 건너뜁니다.');
+    else if (!userProfile.schedule) console.log('⚠️ 일정이 없어 확인을 건너뜁니다.');
+  }
+
+  // 3. 🔥 여러 일정이 있는 경우 각각의 날씨 정보 조회
+  if (scheduleLocations.length > 1) {
+    console.log(`\n🌐 ${scheduleLocations.length}개 일정의 날씨 정보 조회 시작...`);
+
+    const weatherPromises = scheduleLocations.map(async (schedule) => {
+      try {
+        console.log(`🔍 "${schedule.summary}" 위치 검색 중: ${schedule.weatherLocation}`);
+        const geo = await geocodeGoogle(schedule.weatherLocation);
+
+        if (!geo) {
+          console.warn(`⚠️ '${schedule.weatherLocation}' 검색 실패`);
+          return null;
+        }
+
+        const [weather, air, pollen] = await Promise.all([
+          getWeather(geo.lat, geo.lon),
+          getAirQuality(geo.lat, geo.lon),
+          getPollenGoogle(geo.lat, geo.lon)
+        ]);
+
+        // 그래프 필요 여부 판단
+        const includeGraph =
+          args.graph_needed ||
+          userInput.includes('온도') || userInput.includes('기온') ||
+          userInput.includes('그래프') || userInput.includes('temperature') ||
+          userInput.includes('temp') || userInput.includes('graph') ||
+          userInput.includes('뭐 입을까') || userInput.includes('뭐 입지') ||
+          userInput.includes('옷') || userInput.includes('코디') ||
+          userInput.includes('what should i wear') || userInput.includes('clothing');
+
+        const hourlyTemps = [];
+        if (weather?.hourly && includeGraph) {
+          const hourly = weather.hourly;
+          const offsetMs = (weather.timezone_offset || 0) * 1000;
+          const localNow = new Date(Date.now() + offsetMs);
+          localNow.setMinutes(0, 0, 0);
+
+          for (let i = 0; i < 6; i++) {
+            const targetLocalTime = new Date(localNow.getTime() + i * 3 * 3600000);
+            const targetUTC = new Date(targetLocalTime.getTime() - offsetMs);
+            const closest = hourly.reduce((prev, curr) =>
+              Math.abs(curr.dt * 1000 - targetUTC.getTime()) < Math.abs(prev.dt * 1000 - targetUTC.getTime()) ? curr : prev
+            );
+            const hour = new Date(targetUTC.getTime() + offsetMs).getUTCHours();
+            const label = `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 ? 'am' : 'pm'}`;
+            hourlyTemps.push({ hour: label, temp: Math.round(closest.temp) });
+          }
+        }
+
+        console.log(`✅ "${schedule.summary}" 날씨 조회 완료`);
+
+        return {
+          scheduleSummary: schedule.summary,
+          scheduleStart: schedule.start,
+          location: schedule.weatherLocation,
+          weather,
+          air,
+          pollen,
+          hourlyTemps
+        };
+      } catch (error) {
+        console.error(`❌ "${schedule.summary}" 날씨 조회 실패:`, error.message);
+        return null;
+      }
+    });
+
+    const weatherResults = await Promise.all(weatherPromises);
+    const validResults = weatherResults.filter(r => r !== null);
+
+    if (validResults.length === 0) {
+      throw new Error('모든 일정의 날씨 조회에 실패했습니다.');
     }
 
-    // 5. 날씨/대기질/꽃가루 데이터 조회
-    const [weather, air, pollen] = await Promise.all([
-      getWeather(lat, lon),
-      getAirQuality(lat, lon),
-      getPollenAmbee(lat, lon)
-    ]);
+    console.log(`✅ ${validResults.length}개 일정의 날씨 조회 완료`);
 
-    // 6. 그래프 필요 여부 판단
-    const includeGraph =
-      args.graph_needed ||
-      userInput.includes('온도') || userInput.includes('기온') ||
-      userInput.includes('그래프') || userInput.includes('temperature') || 
-      userInput.includes('temp') || userInput.includes('graph') ||
-      userInput.includes('뭐 입을까') || userInput.includes('뭐 입지') ||        
-      userInput.includes('옷') || userInput.includes('코디') ||
-      userInput.includes('what should i wear') || userInput.includes('clothing');
-
-    const hourlyTemps = [];
-    
-    if (weather?.hourly && includeGraph) {
-      const hourly = weather.hourly;
-      const offsetMs = (weather.timezone_offset || 0) * 1000;
-      const localNow = new Date(Date.now() + offsetMs);
-      localNow.setMinutes(0, 0, 0);
-
-      for (let i = 0; i < 6; i++) {
-        const targetLocalTime = new Date(localNow.getTime() + i * 3 * 3600000);
-        const targetUTC = new Date(targetLocalTime.getTime() - offsetMs);
-        const closest = hourly.reduce((prev, curr) =>
-          Math.abs(curr.dt * 1000 - targetUTC.getTime()) < Math.abs(prev.dt * 1000 - targetUTC.getTime()) ? curr : prev
-        );
-        const hour = new Date(targetUTC.getTime() + offsetMs).getUTCHours();
-        const label = `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 ? 'am' : 'pm'}`;
-        hourlyTemps.push({ hour: label, temp: Math.round(closest.temp) });
-      }
-    }
-
-    // 7. 응답 포맷팅
+    // 응답 포맷팅
     const formattedDate = requestedDate.toLocaleDateString('en-US', {
       year: 'numeric', month: 'short', day: 'numeric'
     });
@@ -195,14 +199,104 @@ async function executeTool(functionCall, userCoords, userProfile) {
     return {
       tool_function_name: 'get_full_weather_with_context',
       output: {
-        location: locationName, 
-        date: formattedDate, 
-        weather,
-        air,
-        pollen,
-        hourlyTemps
+        multipleLocations: true,
+        date: formattedDate,
+        requestDate: dateKey,
+        schedules: validResults
       }
     };
+  }
+
+  // 4. 단일 위치 또는 일정이 없는 경우 (기존 로직)
+  let lat, lon, locationName;
+  console.log(`\n🌍 최종 타겟 지역: "${targetLocation}"`);
+
+  if (targetLocation.toUpperCase() === 'CURRENT_LOCATION' || targetLocation === '현재 위치') {
+    if (!userCoords) throw new Error('현재 위치가 제공되지 않았습니다.');
+    lat = userCoords.latitude;
+    lon = userCoords.longitude;
+
+    try {
+      locationName = await reverseGeocode(lat, lon);
+      console.log('📍 현재 위치 사용:', locationName);
+    } catch (error) {
+      locationName = '현재 위치';
+    }
+  } else {
+    console.log(`🔍 지역 검색 시도: ${targetLocation}`);
+    const geo = await geocodeGoogle(targetLocation);
+
+    if (!geo) {
+      console.warn(`⚠️ '${targetLocation}' 검색 실패. 현재 위치로 대체.`);
+      if (userCoords) {
+        lat = userCoords.latitude;
+        lon = userCoords.longitude;
+        locationName = await reverseGeocode(lat, lon);
+      } else {
+        throw new Error(`'${targetLocation}'의 좌표를 찾을 수 없습니다.`);
+      }
+    } else {
+      lat = geo.lat;
+      lon = geo.lon;
+      locationName = targetLocation;
+      console.log(`✅ 좌표 검색 성공: ${locationName} (${lat}, ${lon})`);
+    }
+  }
+
+  // 5. 날씨/대기질/꽃가루 데이터 조회
+  const [weather, air, pollen] = await Promise.all([
+    getWeather(lat, lon),
+    getAirQuality(lat, lon),
+    getPollenGoogle(lat, lon)
+  ]);
+
+  // 6. 그래프 필요 여부 판단
+  const includeGraph =
+    args.graph_needed ||
+    userInput.includes('온도') || userInput.includes('기온') ||
+    userInput.includes('그래프') || userInput.includes('temperature') ||
+    userInput.includes('temp') || userInput.includes('graph') ||
+    userInput.includes('뭐 입을까') || userInput.includes('뭐 입지') ||
+    userInput.includes('옷') || userInput.includes('코디') ||
+    userInput.includes('what should i wear') || userInput.includes('clothing');
+
+  const hourlyTemps = [];
+
+  if (weather?.hourly && includeGraph) {
+    const hourly = weather.hourly;
+    const offsetMs = (weather.timezone_offset || 0) * 1000;
+    const localNow = new Date(Date.now() + offsetMs);
+    localNow.setMinutes(0, 0, 0);
+
+    for (let i = 0; i < 6; i++) {
+      const targetLocalTime = new Date(localNow.getTime() + i * 3 * 3600000);
+      const targetUTC = new Date(targetLocalTime.getTime() - offsetMs);
+      const closest = hourly.reduce((prev, curr) =>
+        Math.abs(curr.dt * 1000 - targetUTC.getTime()) < Math.abs(prev.dt * 1000 - targetUTC.getTime()) ? curr : prev
+      );
+      const hour = new Date(targetUTC.getTime() + offsetMs).getUTCHours();
+      const label = `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 ? 'am' : 'pm'}`;
+      hourlyTemps.push({ hour: label, temp: Math.round(closest.temp) });
+    }
+  }
+
+  // 7. 응답 포맷팅
+  const formattedDate = requestedDate.toLocaleDateString('en-US', {
+    year: 'numeric', month: 'short', day: 'numeric'
+  });
+
+  return {
+    tool_function_name: 'get_full_weather_with_context',
+    output: {
+      location: locationName,
+      date: formattedDate,
+      requestDate: dateKey,
+      weather,
+      air,
+      pollen,
+      hourlyTemps
+    }
+  };
 }
 
 module.exports = {

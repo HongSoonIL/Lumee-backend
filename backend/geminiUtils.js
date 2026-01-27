@@ -1,5 +1,6 @@
 const axios = require('axios');
 const conversationStore = require('./conversationStore');
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 /**
  * Gemini API 호출 관련 로직을 모아놓은 유틸리티 파일입니다.
@@ -12,6 +13,10 @@ const geminiApi = axios.create({
   baseURL: 'https://generativelanguage.googleapis.com/v1beta/models',
   params: { key: GEMINI_API_KEY },
 });
+
+// Gemini 모델 인스턴스 생성 (scheduleLocationExtractor에서 사용)
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 // 🔥 언어 감지 함수 추가
 function detectLanguage(text) {
@@ -46,7 +51,17 @@ async function callGeminiForToolSelection(userInput, tools) {
     contents,
     tools: [tools],
     systemInstruction,
+    safetySettings: [
+      { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+    ]
   });
+
+  // 디버깅: 응답 구조 확인
+  console.log('🔍 Gemini 1차 응답:', JSON.stringify(data, null, 2));
+
   return data;
 }
 
@@ -54,10 +69,51 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
   // 🔥 언어 감지
   const language = detectLanguage(userInput);
 
-  // 🔥 위치 정보 추출
+  // 🔥 위치 정보 및 여러 일정 처리
   let locationText = '';
+  let scheduleDetailsText = '';
   const weatherTool = toolOutputs.find(output => output.tool_function_name === 'get_full_weather_with_context');
-  if (weatherTool?.output?.location) {
+
+  // 🔥 여러 일정이 있는 경우
+  if (weatherTool?.output?.multipleLocations && weatherTool?.output?.schedules) {
+    const schedules = weatherTool.output.schedules;
+
+    if (language === 'ko') {
+      scheduleDetailsText = `\n\n[오늘의 일정별 날씨 정보]\n`;
+      schedules.forEach((schedule, index) => {
+        const time = new Date(schedule.scheduleStart).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+        const temp = schedule.weather?.current?.temp ? Math.round(schedule.weather.current.temp) : '정보 없음';
+        const desc = schedule.weather?.current?.weather?.[0]?.description || '날씨 정보 없음';
+        const pm25 = schedule.air?.pm25;
+        const airLevel = pm25 !== undefined ?
+          (pm25 <= 15 ? '좋음' : pm25 <= 35 ? '보통' : pm25 <= 75 ? '나쁨' : '매우 나쁨') :
+          '정보 없음';
+
+        scheduleDetailsText += `${index + 1}. "${schedule.scheduleSummary}" (${time})\n`;
+        scheduleDetailsText += `   - 위치: ${schedule.location}\n`;
+        scheduleDetailsText += `   - 날씨: ${desc}, 기온 ${temp}°C\n`;
+        scheduleDetailsText += `   - 공기질: ${airLevel}\n`;
+      });
+    } else {
+      scheduleDetailsText = `\n\n[Weather Information for Today's Schedules]\n`;
+      schedules.forEach((schedule, index) => {
+        const time = new Date(schedule.scheduleStart).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        const temp = schedule.weather?.current?.temp ? Math.round(schedule.weather.current.temp) : 'N/A';
+        const desc = schedule.weather?.current?.weather?.[0]?.description || 'No weather data';
+        const pm25 = schedule.air?.pm25;
+        const airLevel = pm25 !== undefined ?
+          (pm25 <= 15 ? 'Good' : pm25 <= 35 ? 'Moderate' : pm25 <= 75 ? 'Poor' : 'Very Poor') :
+          'N/A';
+
+        scheduleDetailsText += `${index + 1}. "${schedule.scheduleSummary}" (${time})\n`;
+        scheduleDetailsText += `   - Location: ${schedule.location}\n`;
+        scheduleDetailsText += `   - Weather: ${desc}, ${temp}°C\n`;
+        scheduleDetailsText += `   - Air Quality: ${airLevel}\n`;
+      });
+    }
+  }
+  // 🔥 단일 위치인 경우 (기존 로직)
+  else if (weatherTool?.output?.location) {
     const location = weatherTool.output.location;
     locationText = language === 'ko' ?
       `\n[현재 위치]\n- 지역: ${location}` :
@@ -73,12 +129,34 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
     const name = userProfile.name || (language === 'ko' ? '사용자' : 'User');
     const hobbies = userProfile.hobbies?.join(', ') || (language === 'ko' ? '정보 없음' : 'Not provided');
     const sensitivities = userProfile.sensitiveFactors?.join(', ') || (language === 'ko' ? '정보 없음' : 'Not provided');
-    // ✨ 일정(schedule) 추가 - 날짜와 함께 명시
-    const schedule = userProfile.schedule || (language === 'ko' ? '일정 없음' : 'No schedule');
+
+    // ✨ 일정(schedule) 배열을 텍스트로 변환
+    let scheduleText = '';
+    if (userProfile.schedule && Array.isArray(userProfile.schedule) && userProfile.schedule.length > 0) {
+      if (language === 'ko') {
+        scheduleText = userProfile.schedule.map(event => {
+          const eventDate = new Date(event.start);
+          const dateStr = eventDate.toISOString().split('T')[0]; // YYYY-MM-DD 형식
+          const timeStr = eventDate.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+          const location = event.weatherLocation || event.location || '위치 미정';
+          return `"${event.summary}" (날짜: ${dateStr}, 시간: ${timeStr}, 장소: ${location})`;
+        }).join(', ');
+      } else {
+        scheduleText = userProfile.schedule.map(event => {
+          const eventDate = new Date(event.start);
+          const dateStr = eventDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+          const timeStr = eventDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+          const location = event.weatherLocation || event.location || 'TBD';
+          return `"${event.summary}" (Date: ${dateStr}, Time: ${timeStr}, Location: ${location})`;
+        }).join(', ');
+      }
+    } else {
+      scheduleText = language === 'ko' ? '일정 없음' : 'No schedule';
+    }
 
     userProfileText = language === 'ko' ?
-      `\n[사용자 정보]\n- 이름: ${name}\n- 취미: ${hobbies}\n- 민감 요소: ${sensitivities}\n- 요청 날짜: ${requestDate}\n- 일정: ${schedule}${locationText}` :
-      `\n[User Information]\n- Name: ${name}\n- Hobbies: ${hobbies}\n- Sensitive factors: ${sensitivities}\n- Request date: ${requestDate}\n- Schedule: ${schedule}${locationText}`;
+      `\n[사용자 정보]\n- 이름: ${name}\n- 취미: ${hobbies}\n- 민감 요소: ${sensitivities}\n- 요청 날짜: ${requestDate}\n- 일정: ${scheduleText}${locationText}${scheduleDetailsText}` :
+      `\n[User Information]\n- Name: ${name}\n- Hobbies: ${hobbies}\n- Sensitive factors: ${sensitivities}\n- Request date: ${requestDate}\n- Schedule: ${scheduleText}${locationText}${scheduleDetailsText}`;
   }
 
   const modelResponse = toolSelectionResponse.candidates?.[0]?.content;
@@ -112,6 +190,7 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
       text: language === 'ko' ? `
       # [기본 설명]
       너는 Lumee라는 이름의 똑똑하고 친근한 날씨 정보 제공 어시스턴트야.
+      **[매우 중요] 답변 시작 시 반드시 사용자 이름으로 인사해야 해. 예: "순일님, 현재 날씨는..."**
       사용자에게는 성을 떼고 이름에 '님' 이라고 호칭을 통일해줘. 
       - **[중요] 반드시 '해요체'를 사용하여 정중하고 친근하게 존댓말을 써야 해. (예: ~해요, ~인가요?, ~바라요)**
       - **[중요] 절대로 반말을 사용하지 마. (예: ~해, ~야, ~지 금지)**
@@ -119,25 +198,42 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
       - 문장은 3~4문장 정도로 간결하게 작성해.
       - 사용자의 질문 의도를 파악하여, 그에 가장 적합한 정보만을 출력하는 똑똑한 어시스턴트야.
       - 이모지를 적절히 추가해서 생동감을 줘 🙂🌤️
-      - 답변 시작 시, 자기소개를 할 필요는 없어.
       - 반드시 한국어로만 답변해야 한다.
+      
+      # ⛔ [절대 금지 사항]
+      **[매우 중요] 절대로 JSON 형식의 데이터를 그대로 출력하지 마세요!**
+      - 도구에서 받은 JSON 데이터(weather, air, pollen 등)를 절대 그대로 보여주지 마.
+      - 항상 JSON 데이터를 자연스러운 한국어 문장으로 변환해서 답변해야 해.
+      - 중괄호 {}, 대괄호 [], "key": "value" 같은 형식을 절대 사용하지 마.
+      - 예시: "{"temp": 22.43}" (금지!) → "기온은 22도예요" (올바름)
       
       # [답변 규칙]
       ## [맥락상 구체적 기상 정보 키워드가 없는 "날씨 어때?" 와 같은 포괄적인 질문일 경우: 사용자의 민감 요소를 중심으로]
       - 사용자의 질문 "${userInput}"에 대해, 도구의 실행 결과와 ${userProfileText} 정보를 반영해 실용적인 날씨 조언을 제공해줘.
-      1.  **답변 시작 시 반드시 현재 위치를 언급해줘.** 예: "민서님, 현재 서울 날씨는..." 또는 "지금 강남구 날씨 상황은..."
-      2.  **[중요] 사용자의 '일정(Schedule)' 정보를 확인할 때:**
+      
+      **[중요] 다음 순서로 답변을 구성해줘:**
+      1.  **첫 번째: 일정 언급 (일정이 있을 경우)**
           - 반드시 '요청 날짜'와 일정에 명시된 날짜를 정확히 비교해줘.
+          - **일정 날짜와 요청 날짜가 같은 날이면** 반드시 답변 시작 시 "~님, 오늘은 [일정명] 일정이 있으시네요!"라고 먼저 언급해줘.
+          - **일정 날짜가 요청 날짜의 다음날이면** "~님, 내일 [일정명] 일정이 있으시네요!"라고 먼저 언급해줘.
           - **일정 날짜와 요청 날짜가 다르면 (1일 이상 차이나면) 그 일정은 절대 언급하지 마.**
           - **요청 날짜와 일치하는 일정이 없는 경우, 일정에 대해서는 아무것도 언급하지 마.**
-          - 일정 날짜와 요청 날짜가 같은 날이면 "오늘 [일정명] 일정이 있으시네요!"라고 언급해줘.
-          - 일정 날짜가 요청 날짜의 다음날이면 "내일 [일정명] 일정이 있으시네요!"라고 언급해줘.
-          - 예시: 요청 날짜가 2025-12-11이고 일정이 "2025-12-19: 설악산 등산"이라면, 날짜가 8일이나 차이나므로 이 일정은 절대 언급하지 마.
-      3.  사용자의 '날씨 민감 요소'와 '취미' 정보를 확인해.
-      4.  두 정보를 종합하여, **"이 사용자에게 지금 가장 중요하고 유용할 것 같은 정보"를 아주 세세하게 스스로 골라내.**
-      5.  예를 들어, 사용자가 '햇빛'에 민감하고 '꽃가루'에 민감하다면, 다른 정보보다 자외선 정보와 꽃가루 정보를 반드시 포함시켜 경고해줘.
-      6.  사용자가 '조깅'을 좋아하는데 미세먼지 수치가 높거나 비 올 확률이 높다면, "오늘은 조깅 대신 실내 운동 어떠세요?" 라고 제안해줘.
-      7.  단순히 정보를 나열하지 말고, 위 판단을 바탕으로 자연스러운 문장으로 요약해서 이야기해줘.
+          
+      2.  **두 번째: 현재 위치와 날씨 정보**
+          - 일정을 언급한 후 현재 위치를 언급해줘. 예: "현재 서울 날씨는..." 또는 "지금 강남구 날씨 상황은..."
+          
+      3.  **[중요] 여러 일정이 있는 경우:**
+          - **[오늘의 일정별 날씨 정보] 섹션이 제공된 경우, 각 일정의 위치별 날씨를 모두 언급해줘.**
+          - 각 일정의 시간대와 위치를 고려하여 맞춤형 조언을 제공해줘.
+          - 예: "민서님, 오늘은 서울 회의 일정이 있으시네요! 오전 9시 서울은 쌀쌀할 예정이니 겉옷을 챙기시고, 오후 2시 부산 출장은 비가 올 수 있으니 우산을 준비하세요!"
+          - 일정별로 날씨가 크게 다르다면 각각에 대한 준비 사항을 알려줘.
+          
+      4.  **세 번째: 개인화 조언**
+          - 사용자의 '날씨 민감 요소'와 '취미' 정보를 확인해.
+          - 두 정보를 종합하여, **"이 사용자에게 지금 가장 중요하고 유용할 것 같은 정보"를 아주 세세하게 스스로 골라내.**
+          - 예를 들어, 사용자가 '햇빛'에 민감하고 '꽃가루'에 민감하다면, 다른 정보보다 자외선 정보와 꽃가루 정보를 반드시 포함시켜 경고해줘.
+          - 사용자가 '조깅'을 좋아하는데 미세먼지 수치가 높거나 비 올 확률이 높다면, "오늘은 조깅 대신 실내 운동 어떠세요?" 라고 제안해줘.
+          - 단순히 정보를 나열하지 말고, 위 판단을 바탕으로 자연스러운 문장으로 요약해서 이야기해줘.
       
       ## [맥락상 구체적 기상 정보 키워드가 존재할 경우: 핵심 정보 + 개인화 조언]
       - 사용자의 질문 "${userInput}"에 대해, 도구의 실행 결과와 ${userProfileText} 정보를 모두 활용해 실용적인 날씨 조언을 제공해줘.
@@ -203,24 +299,42 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
     ` : `
       # [Basic Description]
       You are Lumee, a smart and friendly weather information assistant.
+      **[VERY IMPORTANT] Always greet the user by their first name at the start of your response. Example: "John, the current weather is..."**
       Address users by their first name with a respectful tone.
       - Use a cheerful, friendly, and caring but polite tone
       - Keep responses to 3-4 sentences
       - Be a smart assistant that understands user intent and provides only the most relevant information
       - Feel free to add appropriate emojis 🙂🌤️
-      - No need to introduce yourself at the beginning of responses
       - You must respond ONLY in English, never in Korean.
+      
+      # ⛔ [ABSOLUTE PROHIBITIONS]
+      **[CRITICAL] NEVER output JSON data directly!**
+      - Never show raw JSON data (weather, air, pollen, etc.) from the tools.
+      - Always convert JSON data into natural English sentences.
+      - Never use curly braces {}, square brackets [], or "key": "value" formats in your response.
+      - Example: "{"temp": 22.43}" (FORBIDDEN!) → "The temperature is 22 degrees" (CORRECT)
       
       # [Response Rules]
       ## [For general questions like "How's the weather?" without specific weather keywords: Focus on user's sensitive factors]
       - For the user's question "${userInput}", provide practical weather advice reflecting the tool results and ${userProfileText} information.
-      1. **Always mention the current location at the beginning of your response.** Example: "Minseo, the current weather in Seoul is..." or "Right now in Gangnam-gu..."
-      2. **When checking the user's 'Schedule' information, you MUST accurately compare the 'Request date' with the dates specified in the schedule.** Only mention schedules that match or are close to the request date, and express the date relationship accurately. Example: "You have a 'Cafe Tour in Seongsu' today (12/16)!" or "You have a 'Marathon' tomorrow (12/17)!" If the dates are far apart (e.g., today is 12/2 but schedule is 12/17), do NOT mention that schedule.**
-      3. Check the user's 'weather sensitive factors' and 'hobbies' information.
-      4. Combine these pieces of information to **carefully select "the most important and useful information for this user right now"**.
-      5. For example, if the user is sensitive to 'sunlight' and 'pollen', prioritize UV and pollen information over other data.
-      6. If the user likes 'jogging' but air quality is poor or rain probability is high, suggest "How about indoor exercise instead of jogging today?"
-      7. Don't just list information; summarize it naturally based on the above judgment.
+      
+      **[IMPORTANT] Structure your response in this order:**
+      1. **First: Mention Schedule (if available)**
+         - You MUST accurately compare the 'Request date' with the dates specified in the schedule.
+         - **If the schedule date is the same as the request date**, start your response with "~, you have [event name] today!"
+         - **If the schedule date is the next day after the request date**, start with "~, you have [event name] tomorrow!"
+         - **If the dates are far apart (1+ day difference), do NOT mention that schedule.**
+         - **If there's no schedule matching the request date, do NOT mention anything about schedules.**
+         
+      2. **Second: Current Location and Weather**
+         - After mentioning the schedule, mention the current location. Example: "The current weather in Seoul is..." or "Right now in Gangnam-gu..."
+         
+      3. **Third: Personalized Advice**
+         - Check the user's 'weather sensitive factors' and 'hobbies' information.
+         - Combine these pieces of information to **carefully select "the most important and useful information for this user right now"**.
+         - For example, if the user is sensitive to 'sunlight' and 'pollen', prioritize UV and pollen information over other data.
+         - If the user likes 'jogging' but air quality is poor or rain probability is high, suggest "How about indoor exercise instead of jogging today?"
+         - Don't just list information; summarize it naturally based on the above judgment.
       
       ## [When specific weather keywords exist: Core information + Personalized advice]
       - For the user's question "${userInput}", utilize both the tool results and ${userProfileText} information to provide practical weather advice.
@@ -286,6 +400,12 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
   const { data } = await geminiApi.post('/gemini-2.0-flash:generateContent', {
     contents,
     systemInstruction,
+    safetySettings: [
+      { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+    ]
   });
   return data;
 }
@@ -293,4 +413,5 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
 module.exports = {
   callGeminiForToolSelection,
   callGeminiForFinalResponse,
+  model,  // scheduleLocationExtractor에서 사용
 };

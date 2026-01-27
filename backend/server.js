@@ -3,21 +3,17 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const http = require('http');
-// [추가됨] 시리얼 통신 모듈
-const { SerialPort } = require('serialport');
-
-// 라즈베리파이 통신을 위한 모듈
-const { WebSocketServer } = require('ws');
+const { google } = require('googleapis');
 
 // 라우트 파일 임포트
 const cameraRoutes = require('./cameraRoutes');
+const { extractScheduleLocations } = require('./scheduleLocationExtractor');
 
 // 서버 시작 시 API 키 확인 (테스트)
 console.log('=== API 키 상태 확인 ===');
 console.log('Gemini API 키:', process.env.GEMINI_API_KEY ? '있음' : '없음');
 console.log('OpenWeather API 키:', process.env.OPENWEATHER_API_KEY ? '있음' : '없음');
-console.log('Ambee API 키:', process.env.AMBEE_POLLEN_API_KEY ? '있음' : '없음');
+console.log('Google Maps API 키:', process.env.GOOGLE_MAPS_API_KEY ? '있음' : '없음');
 
 // Module import
 const { getUserProfile } = require('./userProfileUtils');
@@ -26,8 +22,6 @@ const { getWeatherByCoords } = require('./weatherUtils'); // 홈 화면 날씨 �
 const conversationStore = require('./conversationStore');
 const { callGeminiForToolSelection, callGeminiForFinalResponse } = require('./geminiUtils');
 const { availableTools, executeTool } = require('./tools');
-// 🔥 LED 컨트롤러 함수
-const { setupLEDRoutes, determineLEDStatus, adjustBrightnessForUser } = require('./ledController');
 
 // 프론트엔드와 연결을 위한 상수
 const corsOptions = {
@@ -47,52 +41,13 @@ app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 // 라우트 등록
 app.use('/camera', cameraRoutes);
 
-// 🎬 정적 파일 서빙 (날씨 영상용)
-app.use('/static', express.static('public'));
-
 // ✅ 필수 API 키
 const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
 
-// Express 앱을 기반으로 HTTP 서버 생성 (웹소켓용)
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
-
 console.log('--- Lumee 백엔드 서버 시작 ---');
-
-// LED 라우트 설정
-setupLEDRoutes(app);
-
-// 🔥🔥🔥 [소리 전용] 아두이노 COM3 연결 설정 🔥🔥🔥 **기기마다 COM번호가 다를 수 있음**
-let soundSerial = null;
-try {
-  soundSerial = new SerialPort({
-    path: 'COM3', // 소리 전용 아두이노 포트
-    baudRate: 9600
-  });
-
-  soundSerial.on('open', () => {
-    console.log('🔊 Sound Arduino connected on COM14');
-  });
-
-  soundSerial.on('error', (err) => {
-    console.error('⚠️ Sound Arduino Error:', err.message);
-  });
-} catch (e) {
-  console.log('⚠️ COM3 port not found. Sound disabled.');
-}
 
 // ---------------------------------------------------------
 
-// 라즈베리파이 노크 신호 처리
-app.post('/knock', (req, res) => {
-  console.log('[HTTP] ✊ 라즈베리파이로부터 "KNOCK" 신호 수신!');
-  wss.clients.forEach(client => {
-    if (client.readyState === client.OPEN) {
-      client.send('KNOCK');
-    }
-  });
-  res.status(200).send('OK');
-});
 
 // 채팅 제목 자동 생성 API
 app.post('/generate-title', async (req, res) => {
@@ -103,45 +58,209 @@ app.post('/generate-title', async (req, res) => {
   }
 });
 
-// 🔥 [필수 함수] 날씨 ID를 문자열 조건으로 변환
-function mapWeatherIdToCondition(id) {
-  if (id >= 200 && id < 300) return "Thunderstorm";
-  if (id >= 300 && id < 500) return "Drizzle";
-  if (id >= 500 && id < 600) return "Rain";
-  if (id >= 600 && id < 700) return "Snow";
-  if (id >= 700 && id < 800) return "Mist";
-  if (id === 800) return "Clear";
-  if (id > 800) return "Clouds";
-  return "Clear";
-}
+// Google Calendar API
+app.post('/calendar/events', async (req, res) => {
+  const { accessToken } = req.body;
 
-// 🎬 [날씨 영상] 날씨 조건에 따른 영상 URL 반환
-function getWeatherVideoUrl(weatherCondition) {
-  const baseUrl = 'http://localhost:4000'; // 백엔드 서버 주소
+  if (!accessToken) {
+    return res.status(400).json({ error: 'Access Token is required' });
+  }
 
-  const videoMap = {
-    'Rain': `${baseUrl}/static/videos/rain.html`,
-    'Snow': `${baseUrl}/static/videos/snow.html`,
-    'Mist': `${baseUrl}/static/videos/mist.html`,        // HTML wrapper 사용
-    'Clear': `${baseUrl}/static/videos/clear.html`,
-    'Clouds': `${baseUrl}/static/videos/clouds.html`,    // HTML wrapper 사용
-    // Thunderstorm과 Drizzle은 제외됨 - Clear로 대체
-    'Thunderstorm': `${baseUrl}/static/videos/clear.html`,
-    'Drizzle': `${baseUrl}/static/videos/rain.html`
-  };
+  try {
+    const oauth2Client = new google.auth.OAuth2();
+    oauth2Client.setCredentials({ access_token: accessToken });
 
-  return videoMap[weatherCondition] || `${baseUrl}/static/videos/clear.html`;
-}
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // 오늘부터 일주일 뒤까지의 일정 가져오기
+    const now = new Date();
+    const nextWeek = new Date();
+    nextWeek.setDate(now.getDate() + 7);
+
+    const response = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: now.toISOString(),
+      timeMax: nextWeek.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+    });
+
+    const events = response.data.items.map(event => ({
+      id: event.id,
+      summary: event.summary,
+      location: event.location || 'Unknown Location', // 위치 정보
+      start: event.start.dateTime || event.start.date,
+      end: event.end.dateTime || event.end.date,
+      description: event.description
+    }));
+
+    // Gemini AI를 사용하여 위치 정보 추출 및 추가
+    console.log('🤖 Gemini AI로 일정에서 위치 정보 추출 중...');
+    const enrichedEvents = await extractScheduleLocations(events);
+    console.log(`✅ 위치 추출 완료: ${enrichedEvents.length}개 일정 처리됨`);
+
+    // 디버깅: 실제 반환되는 데이터 확인
+    console.log('📤 프론트엔드로 전송하는 일정 데이터:');
+    enrichedEvents.forEach((event, index) => {
+      console.log(`  [${index}] ${event.summary} - ${event.start}`);
+      console.log(`      장소: ${event.location}`);
+      console.log(`      날씨조회위치: ${event.weatherLocation}`);
+    });
+
+    res.json(enrichedEvents);
+
+  } catch (error) {
+    console.error('Calendar API Error:', error);
+    res.status(500).json({ error: 'Failed to fetch calendar events' });
+  }
+});
+
+// ✅ 구글 캘린더 일정 추가 API (새로 추가할 부분)
+app.post('/calendar/events/create', async (req, res) => {
+  const { accessToken, summary, location, description, startDateTime, endDateTime } = req.body;
+
+  if (!accessToken) {
+    return res.status(400).json({ error: 'Access Token is required' });
+  }
+
+  try {
+    const oauth2Client = new google.auth.OAuth2();
+    oauth2Client.setCredentials({ access_token: accessToken });
+
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // 구글 API 형식에 맞게 데이터 구성
+    const event = {
+      summary: summary, // 일정 제목
+      location: location || '', // 장소
+      description: description || 'Lumee 앱에서 생성됨', // 설명
+      start: {
+        dateTime: startDateTime, // 예: "2026-01-21T15:00:00+09:00"
+        timeZone: 'Asia/Seoul',
+      },
+      end: {
+        dateTime: endDateTime,
+        timeZone: 'Asia/Seoul',
+      },
+    };
+
+    const response = await calendar.events.insert({
+      calendarId: 'primary',
+      resource: event,
+    });
+
+    console.log('✅ 일정 생성 성공:', response.data.summary);
+    res.json({ success: true, event: response.data });
+
+  } catch (error) {
+    console.error('Calendar Create Error:', error);
+    res.status(500).json({ error: 'Failed to create calendar event' });
+  }
+});
+
+// ✅ 구글 캘린더 일정 삭제 API
+app.post('/calendar/events/delete', async (req, res) => {
+  const { accessToken, eventId } = req.body;
+
+  if (!accessToken || !eventId) {
+    return res.status(400).json({ error: 'Access Token and Event ID are required' });
+  }
+
+  try {
+    const oauth2Client = new google.auth.OAuth2();
+    oauth2Client.setCredentials({ access_token: accessToken });
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    await calendar.events.delete({
+      calendarId: 'primary',
+      eventId: eventId,
+    });
+
+    console.log('✅ 일정 삭제 성공:', eventId);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Calendar Delete Error:', error);
+    res.status(500).json({ error: 'Failed to delete calendar event' });
+  }
+});
+
+// 일정 수정
+app.post('/calendar/events/update', async (req, res) => {
+  const { accessToken, eventId, summary, location, description, startDateTime, endDateTime } = req.body;
+
+  if (!accessToken || !eventId) {
+    return res.status(400).json({ error: 'Access Token and Event ID are required' });
+  }
+
+  try {
+    const oauth2Client = new google.auth.OAuth2();
+    oauth2Client.setCredentials({ access_token: accessToken });
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // ✅ patch에 넣을 body (googleapis는 resource 키로 받음)
+    const resource = {};
+
+    if (summary !== undefined) resource.summary = summary;
+    if (location !== undefined) resource.location = location || '';
+    if (description !== undefined) resource.description = description || '';
+
+    // ✅ 시간 보정: start >= end면 end를 +1일로 보정 (오후→오전 케이스)
+    const safeStart = startDateTime ? new Date(startDateTime) : null;
+    let safeEnd = endDateTime ? new Date(endDateTime) : null;
+
+    if (safeStart && safeEnd && safeEnd.getTime() <= safeStart.getTime()) {
+      // end를 다음날로 +1일
+      safeEnd = new Date(safeEnd.getTime() + 24 * 60 * 60 * 1000);
+    }
+
+    if (safeStart) {
+      resource.start = { dateTime: safeStart.toISOString(), timeZone: 'Asia/Seoul' };
+    }
+    if (safeEnd) {
+      resource.end = { dateTime: safeEnd.toISOString(), timeZone: 'Asia/Seoul' };
+    }
+
+    console.log('🛠 PATCH eventId:', eventId);
+    console.log('🛠 PATCH resource:', JSON.stringify(resource, null, 2));
+
+    const patched = await calendar.events.patch({
+      calendarId: 'primary',
+      eventId,
+      resource,
+    });
+
+    return res.json({ success: true, event: patched.data });
+  } catch (error) {
+    console.error('❌ Calendar Update Error:', error?.response?.data || error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to update calendar event',
+      detail: error?.response?.data || String(error),
+    });
+  }
+});
 
 // ✨ LLM 중심 채팅 엔드포인트 ✨
 app.post('/chat', async (req, res) => {
-  const { userInput, coords, uid } = req.body;
-  console.log(`💬 사용자 질문 (UID: ${uid}):`, userInput);
+  const { userInput, coords, uid, schedule } = req.body;
+
+  if (uid) {
+    console.log(`💬 사용자 질문 (인증됨 - UID: ${uid}):`, userInput);
+  } else {
+    console.log(`💬 사용자 질문 (게스트):`, userInput);
+  }
+
   conversationStore.addUserMessage(userInput);
 
   try {
     // 1. 사용자 프로필 로드
     const userProfile = await getUserProfile(uid);
+
+    // 🔥 2. Google Calendar 일정을 userProfile에 병합
+    if (schedule && Array.isArray(schedule) && schedule.length > 0) {
+      userProfile.schedule = schedule;
+      console.log(`📅 Google Calendar 일정 ${schedule.length}개 병합됨`);
+    }
 
     // 2. 도구 선택
     const toolSelectionResponse = await callGeminiForToolSelection(userInput, availableTools);
@@ -171,60 +290,42 @@ app.post('/chat', async (req, res) => {
     );
 
     const reply = finalResponse.candidates?.[0]?.content?.parts?.[0]?.text || '죄송해요, 답변 생성에 실패했어요.';
-    const responsePayload = { reply };
 
-    // 5. LED 및 소리 제어 로직
-    const fullWeather = toolOutputs.find(o => o.tool_function_name === 'get_full_weather_with_context');
+    // 🔥 [안전 장치] JSON 형식이 그대로 노출되는지 확인
+    const containsRawJSON = (text) => {
+      // JSON 객체 패턴 감지 (중괄호와 콜론이 함께 있는 경우)
+      const jsonPattern = /\{[\s\S]*?["'][\s\S]*?:[\s\S]*?["'][\s\S]*?\}/;
+      // get_full_weather 같은 함수명이 포함된 경우
+      const functionPattern = /get_full_weather|get_.*_with_context/;
+      return jsonPattern.test(text) || functionPattern.test(text);
+    };
 
-    if (fullWeather && fullWeather.output) {
-      const w = fullWeather.output.weather || {};
-      const a = fullWeather.output.air || {};
-      const p = fullWeather.output.pollen || {};
+    // JSON이 감지되면 안전한 대체 메시지 제공
+    let safeReply = reply;
+    if (containsRawJSON(reply)) {
+      console.error('⚠️ 경고: Gemini 응답에 JSON 형식이 감지되어 대체 메시지로 변환합니다.');
+      console.error('원본 응답:', reply.substring(0, 200) + '...');
 
-      const mappedWeatherData = {
-        temperature: w.temp,
-        feelsLike: w.feelsLike,
-        pm10: a.pm10 || 0,
-        pm25: a.pm25 || 0,
-        ozone: 0,
-        uvIndex: w.uvi || 0,
-        pollen: p.count || 0,
-        precipitation: w.rain_1h || 0,
-        weather: mapWeatherIdToCondition(w.weatherId), // 함수 사용
-        clouds: w.clouds || 0,
-        humidity: w.humidity || 0
-      };
+      // 날씨 데이터에서 기본 정보 추출하여 안전한 메시지 생성
+      const fullWeather = toolOutputs.find(o => o.tool_function_name === 'get_full_weather_with_context');
+      if (fullWeather?.output) {
+        const { location, weather } = fullWeather.output;
+        const temp = weather?.current?.temp ? Math.round(weather.current.temp) : null;
+        const desc = weather?.current?.weather?.[0]?.description || '날씨';
+        const userName = userProfile?.name || '사용자';
 
-      // LED 상태 결정
-      let ledStatus = determineLEDStatus(mappedWeatherData);
-
-      if (userProfile) {
-        ledStatus = adjustBrightnessForUser(ledStatus, userProfile);
+        safeReply = temp
+          ? `${userName}님, 현재 ${location || '해당 지역'}의 날씨는 ${desc}이고 기온은 ${temp}도예요. 😊`
+          : `${userName}님, 현재 ${location || '해당 지역'}의 날씨를 확인했어요! 😊`;
+      } else {
+        safeReply = '죄송해요, 날씨 정보를 표시하는 데 문제가 있었어요. 다시 질문해주시겠어요? 😥';
       }
-
-      // 🔥 [소리 출력] COM3 아두이노로 명령 전송
-      if (soundSerial && soundSerial.isOpen && ledStatus.soundId) {
-        soundSerial.write(ledStatus.soundId.toString());
-        console.log(`🔊 Sent sound command to COM3: ${ledStatus.soundId}`);
-      }
-
-      responsePayload.ledStatus = {
-        r: ledStatus.color.r,
-        g: ledStatus.color.g,
-        b: ledStatus.color.b,
-        effect: ledStatus.effect,
-        duration: ledStatus.duration,
-        priority: ledStatus.priority,
-        message: ledStatus.message,
-        s: ledStatus.soundId
-      };
-
-      // 🎬 [날씨 영상] 날씨 조건에 따른 영상 URL 추가
-      const weatherCondition = mappedWeatherData.weather;
-      const videoUrl = getWeatherVideoUrl(weatherCondition);
-      responsePayload.videoUrl = videoUrl;
-      console.log(`🎬 Weather video URL: ${videoUrl} (condition: ${weatherCondition})`);
     }
+
+    const responsePayload = { reply: safeReply };
+
+    // 날씨 데이터 찾기
+    const fullWeather = toolOutputs.find(o => o.tool_function_name === 'get_full_weather_with_context');
 
     // 그래프 및 미세먼지 정보 추가
     const lowerInput = userInput.toLowerCase();
@@ -245,6 +346,22 @@ app.post('/chat', async (req, res) => {
         responsePayload.dust = {
           value: pm25,
           level: getAirLevel(pm25),
+          date: fullWeather.output.date
+        };
+      }
+    }
+
+    // (3) 꽃가루 데이터
+    if (['꽃가루', '알레르기', 'pollen', 'allergy'].some(k => lowerInput.includes(k))) {
+      if (fullWeather?.output?.pollen) {
+        const pollenData = fullWeather.output.pollen;
+        // Google Pollen API 응답 형식
+        responsePayload.pollen = {
+          type: pollenData.type,           // "grass_pollen", "tree_pollen", "weed_pollen"
+          value: pollenData.value,         // UPI 0-5
+          category: pollenData.category,   // "Very low", "Low", "Moderate", "High", "Very high"
+          level: pollenData.category,      // 프론트엔드 호환성
+          inSeason: pollenData.inSeason,   // 시즌 여부
           date: fullWeather.output.date
         };
       }
@@ -320,7 +437,6 @@ app.post('/weather-graph', async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log(`[HTTP] API 서버가 ${PORT} 포트에서 실행 중입니다.`);
-  console.log(`[웹소켓] 통신 서버가 ${PORT} 포트에서 함께 실행 중입니다.`);
 });
