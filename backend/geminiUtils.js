@@ -16,7 +16,7 @@ const geminiApi = axios.create({
 
 // Gemini 모델 인스턴스 생성 (scheduleLocationExtractor에서 사용)
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 // 🔥 언어 감지 함수 추가
 function detectLanguage(text) {
@@ -47,7 +47,7 @@ async function callGeminiForToolSelection(userInput, tools) {
   };
 
   console.log('📡 1차 Gemini 호출: 도구 선택');
-  const { data } = await geminiApi.post('/gemini-2.0-flash:generateContent', {
+  const { data } = await geminiApi.post('/gemini-2.5-flash:generateContent', {
     contents,
     tools: [tools],
     systemInstruction,
@@ -397,7 +397,7 @@ async function callGeminiForFinalResponse(userInput, toolSelectionResponse, tool
   };
 
   console.log('📡 2차 Gemini 호출: 최종 응답 생성');
-  const { data } = await geminiApi.post('/gemini-2.0-flash:generateContent', {
+  const { data } = await geminiApi.post('/gemini-2.5-flash:generateContent', {
     contents,
     systemInstruction,
     safetySettings: [

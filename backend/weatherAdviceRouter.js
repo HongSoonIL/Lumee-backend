@@ -41,7 +41,7 @@ ${userText}
   const contents = [...conversationStore.getHistory(), { role: 'user', parts: [{ text: prompt }] }];
   try {
     const result = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-8b:generateContent?key=${GEMINI_API_KEY}`,
       { contents }
     );
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || '답변을 생성하지 못했어요.';
@@ -104,7 +104,7 @@ ${userText}
   const contents = [...conversationStore.getHistory(), { role: 'user', parts: [{ text: prompt }] }];
   try {
     const result = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-8b:generateContent?key=${GEMINI_API_KEY}`,
       { contents }
     );
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || '답변을 생성하지 못했어요.';
@@ -168,7 +168,7 @@ ${rainInfo}
     const contents = [...conversationStore.getHistory(), { role: 'user', parts: [{ text: prompt }] }];
 
     const result = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-8b:generateContent?key=${GEMINI_API_KEY}`,
       { contents }
     );
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || '답변을 생성하지 못했어요.';
@@ -219,7 +219,7 @@ ${userText}
     const contents = [...conversationStore.getHistory(), { role: 'user', parts: [{ text: prompt }] }];
 
     const result = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-8b:generateContent?key=${GEMINI_API_KEY}`,
       { contents }
     );
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || '답변을 생성하지 못했어요.';
@@ -269,7 +269,7 @@ ${userText}
     const contents = [...conversationStore.getHistory(), { role: 'user', parts: [{ text: prompt }] }];
 
     const result = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-8b:generateContent?key=${GEMINI_API_KEY}`,
       { contents }
     );
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || '답변을 생성하지 못했어요.';
@@ -313,7 +313,7 @@ ${userText}
     const contents = [...conversationStore.getHistory(), { role: 'user', parts: [{ text: prompt }] }];
 
     const result = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-8b:generateContent?key=${GEMINI_API_KEY}`,
       { contents }
     );
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || '답변을 생성하지 못했어요.';
@@ -369,7 +369,7 @@ ${userText}
     const contents = [...conversationStore.getHistory(), { role: 'user', parts: [{ text: prompt }] }];
 
     const result = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-8b:generateContent?key=${GEMINI_API_KEY}`,
       { contents }
     );
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || '답변을 생성하지 못했어요.';
@@ -424,7 +424,7 @@ ${userText}
     const contents = [...conversationStore.getHistory(), { role: 'user', parts: [{ text: prompt }] }];
 
     const result = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-8b:generateContent?key=${GEMINI_API_KEY}`,
       { contents }
     );
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || '답변을 생성하지 못했어요.';
@@ -481,7 +481,7 @@ ${userText}
     const contents = [...conversationStore.getHistory(), { role: 'user', parts: [{ text: prompt }] }];
 
     const result = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-8b:generateContent?key=${GEMINI_API_KEY}`,
       { contents }
     );
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || '답변을 생성하지 못했어요.';
@@ -528,7 +528,7 @@ ${userText}
     const contents = [...conversationStore.getHistory(), { role: 'user', parts: [{ text: prompt }] }];
 
     const result = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-8b:generateContent?key=${GEMINI_API_KEY}`,
       { contents }
     );
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || '답변을 생성하지 못했어요.';
@@ -591,7 +591,7 @@ ${feeling}
     const contents = [...conversationStore.getHistory(), { role: 'user', parts: [{ text: prompt }] }];
 
     const result = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-8b:generateContent?key=${GEMINI_API_KEY}`,
       { contents }
     );
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || '답변을 생성하지 못했어요.';
